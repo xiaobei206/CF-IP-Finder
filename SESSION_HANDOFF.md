@@ -1,8 +1,8 @@
 # Session Handoff — CF IP Finder
 
-**当前仓库版本：0.1.4（已发布）**  
+**当前仓库版本：0.1.5（发布验证中）**  
 **当前主分支：`main`**  
-**当前开发基线：0.1.4 两级候选漏斗边界修正**
+**当前开发基线：0.1.5 选中 IP 右键手动诊断**
 
 ## 1. 当前实现摘要
 
@@ -74,7 +74,7 @@ Self-test passed: CIDR/Shodan import, stage checkpoints, Ping/TCPing schema, ASN
 - TCPING 只测 TCP connect，不代表代理性能。
 - ASN/BGP 是 RIPEstat 公共路由观测，不等于当前 ISP 的真实路径或精品线路类型。
 - VLESS 真实测速需要外部 `xray.exe` 和有效模板；不同 transport/security 的支持继承自 legacy tester。
-- v0.1.2、v0.1.3、v0.1.4 均已由 GitHub Actions 成功完成 Windows EXE 构建和 Release；当前最新版本为 0.1.4。
+- v0.1.2、v0.1.3、v0.1.4 均已由 GitHub Actions 成功完成 Windows EXE 构建和 Release；0.1.5 已加入选中 IP 手动诊断；本轮 Release 的最终 Actions/资产结果以 GitHub 发布工作流为准。
 
 ## 5. 下一步建议
 
@@ -91,14 +91,10 @@ Self-test passed: CIDR/Shodan import, stage checkpoints, Ping/TCPing schema, ASN
 
 先读 `AI_BOOTSTRAP_PROMPT.md` 和 `AI_DEVELOPMENT_PROTOCOL.md`，再检查 `main`、`VERSION`、GitHub Releases 和 Actions；不要让用户再次提供源码 ZIP。仓库本身就是源代码。完成接手总结后按用户明确的目标直接继续。
 
-## 7. 下一版本计划 — 0.1.5 选中 IP 右键诊断
+## 7. v0.1.5 交付摘要
 
-本轮目标是在结果表增加真正支持 Ctrl/Shift 多选的上下文菜单，为当前选中的 IP 直接执行 PING、TCPING、VLESS 完整文件测速或 ASN/BGP 查询，并支持复制/导出所选 IP。
-
-关键边界：
-- 右键位于已选行时保留整个选择组；右键未选行时切换为该行单选；空白区域不弹出行操作菜单。
-- 手动诊断只对明确选中的 IP 执行，不受全局 Top-N 队列限制；结果逐 IP 写回既有 SQLite 字段。
-- 手动诊断不得更改全局 stages 状态、active_stage、stage_selections / stage_candidates 或候选快照文件。
-- 定期刷新结果表时按 IP 稳定 iid 恢复选择，避免刷新后多选丢失。
-- VLESS 必须继续调用 cf_ip_tester_legacy.py 原有的配置预检和完整文件下载实现，不复制、不重写旧引擎。
-- 全局阶段与手动诊断互斥，保留现有暂停/停止交互。
+- 结果表启用 Ctrl/Shift 多选和右键上下文菜单，支持手动 PING、TCPING、VLESS 下载测速、ASN/BGP 查询。
+- 手动诊断只执行选中 IP，逐 IP 更新数据库结果；不更改全局阶段状态、active_stage、候选队列及快照。
+- 表格刷新/排序后按 IP 恢复可见选择；支持复制和导出所选 IP。
+- VLESS 手动测试复用旧版 legacy tester；未改动 cf_ip_tester_legacy.py。
+- 新增离线回归测试。请继续核实本轮 Release Action 的 Windows 构建、Release tag 与 EXE/Source ZIP/SHA256SUMS 资产；真实网络和用户 VLESS 链路仍需 Windows 实机测试。

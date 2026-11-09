@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""CF IP Finder 0.1.4 - staged IPv4 scanner and VLESS/Xray tester.
+"""CF IP Finder 0.1.5 - staged IPv4 scanner and VLESS/Xray tester.
 Python 3.10+; standard library only. Windows GUI uses tkinter.
 """
 from __future__ import annotations
@@ -34,7 +34,7 @@ from typing import Any, Iterable
 import cf_ip_tester_legacy as legacy_tester
 
 APP_NAME = "CF IP Finder"
-APP_VERSION = "0.1.4"
+APP_VERSION = "0.1.5"
 DEFAULT_SPEED_URL = "http://speedtest.tyo11.jp.leaseweb.net/10mb.bin"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "CF-IP-Finder" if os.name == "nt" else Path.home() / ".cf-ip-finder"
 
@@ -798,7 +798,7 @@ class ScanRunner:
                 if self.stop_event.is_set():
                     for f in futures:
                         f.cancel()
-                    self.emit("log", f"{name}：收到停止请求，保留已提交检查点")
+                    self.emit("log", f"{display_name}：收到停止请求，保留已提交检查点")
                     return False
 
                 # Pause prevents new submissions. Existing requests are allowed to finish
@@ -1511,7 +1511,7 @@ class App:
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
 
-    def _config_from_ui(self) -> dict[str, Any]:
+    def _config_from_ui(self, validate_speed_settings: bool = True) -> dict[str, Any]:
         try:
             scan_workers = max(1, min(800, int(self.scan_workers_var.get())))
             probe_workers = max(1, min(300, int(self.probe_workers_var.get())))
@@ -1528,13 +1528,14 @@ class App:
         except ValueError as exc:
             raise ValueError("并发、次数、超时和候选前 N 必须填写有效数字；候选前 N 可填 0 表示全部") from exc
         vless_uri = self.vless_text.get("1.0", "end").strip()
-        if vless_uri:
+        if vless_uri and validate_speed_settings:
             parse_vless(vless_uri)
             legacy_tester.parse_vless_link(vless_uri)
         url = self.speed_url_var.get().strip() or DEFAULT_SPEED_URL
-        p = urllib.parse.urlsplit(url)
-        if p.scheme.lower() not in ("http", "https") or not p.hostname:
-            raise ValueError("测速 URL 必须是有效的 http:// 或 https:// 地址")
+        if validate_speed_settings:
+            p = urllib.parse.urlsplit(url)
+            if p.scheme.lower() not in ("http", "https") or not p.hostname:
+                raise ValueError("测速 URL 必须是有效的 http:// 或 https:// 地址")
         return {"scan_workers": scan_workers, "probe_workers": probe_workers, "timeout": timeout,
                 "ping_count": ping_count, "ping_timeout": ping_timeout,
                 "tcping_count": tcping_count, "tcping_timeout": tcping_timeout,
@@ -1972,7 +1973,7 @@ class App:
         ):
             return
         try:
-            cfg = self._config_from_ui()
+            cfg = self._config_from_ui(validate_speed_settings=(stage == "speed"))
             cfg["target_text"] = self.last_config.get("target_text", "")
             cfg["mode"] = self.last_config.get("mode", self.mode_var.get())
             atomic_write(self.task_folder / "task_config.json", json.dumps(cfg, ensure_ascii=False, indent=2))

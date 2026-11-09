@@ -46,3 +46,14 @@
 - 对 0.1.2 任务增加兼容：旧任务无 TCPING selection snapshot，回退到已写入 `tcping_status` 的 CF 候选作为已测 TCPING 集合。
 - 新增两个回归测试：VLESS 0=全部仍限于真实 TCPING cohort；旧数据库无 snapshot 可以恢复。
 - `cf_ip_tester_legacy.py` 未修改。
+
+
+## 2026-11-10 — v0.1.5 选中 IP 右键诊断
+
+- 结果表使用 extended selection，支持 Ctrl/Shift 多选，并加入右键菜单的 PING、TCPING、VLESS、ASN/BGP 操作。
+- 右键已选行保持多选；右键未选行改为单选；右键空白区域不触发行操作。
+- 新增 ManualSelectionRunner：仅处理调用时明确传入的 IP 列表，结果逐 IP 保存，但不更改 stages、active_stage、stage_selections / stage_candidates 或全局阶段快照。
+- 表格以 IP 作为稳定 iid，刷新后恢复可见选中项；复制和导出都支持当前多选 IP。
+- VLESS 手动测试仍调用 legacy_tester.parse_vless_link、validate_xray_config 和 test_one_ip，保持旧版配置预检及完整文件下载流程。
+- 新增 tests/test_manual_selection.py，验证直接选集与全局 Top-N 队列独立、ASN 不受 Shodan 默认 Top-N 限制，以及 VLESS 调用旧引擎。
+- 代码改动提交 8a5502376968af2ff9978aff2a19913e13f931fb 已通过 Windows/Ubuntu 离线编译、自检和单元测试；正式 Release 的 Windows 构建与资产由本次版本提交工作流验证。

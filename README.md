@@ -1,6 +1,6 @@
 # CF IP Finder
 
-**Current version: 0.1.4** · Windows 10/11 · Python 3.10+ · standard-library runtime
+**Current version: 0.1.5** · Windows 10/11 · Python 3.10+ · standard-library runtime
 
 CF IP Finder is a staged IPv4 candidate discovery, Cloudflare-feature screening, connectivity diagnostics, and VLESS download-testing desktop tool. The user supplies the scan targets and controls each stage.
 
@@ -9,12 +9,12 @@ CF IP Finder is a staged IPv4 candidate discovery, Cloudflare-feature screening,
 - **Local CIDR mode** — enter one CIDR, IPv4 range, or IP per line. Run TCP 443, CF HTTP fingerprinting, PING, TCPING, VLESS download testing, and ASN/BGP lookup as separate manual steps.
 - **Shodan import mode** — paste IPs or import Shodan CSV/JSON text. Since the source results are expected to have been found with `port:443`, the app skips the duplicate TCP 443 stage. Run CF filtering, PING, TCPING, VLESS testing, then manually request ASN for the fastest N successful VLESS results (default 30).
 
-Both modes now use a candidate funnel: all CF hits are pinged, then PING Top-N (default 500) feeds TCPING, and TCPING Top-N (default 100) feeds VLESS. Enter 0 at either filter to include all candidates, including unresponsive/failed results. Candidate queues are persisted for exact resume. Every result column supports ascending/descending sorting. Missing values remain last. The current sort changes the table view only; it does not mutate stored results or Shodan ASN Top-N selection.
+Both modes use a candidate funnel: all CF hits are pinged, then PING Top-N (default 500) feeds TCPING, and TCPING Top-N (default 100) feeds VLESS. Enter 0 at either filter to include all candidates, including unresponsive/failed results. Candidate queues are persisted for exact resume. Every result column supports ascending/descending sorting; missing values remain last. Table rows support Ctrl/Shift multi-select and a right-click menu for direct PING, TCPING, VLESS full-download tests, ASN/BGP lookup, copying and exporting selected IPs. Direct tests run exactly the selected IP set and update per-IP result fields without changing global stage status or funnel snapshots. VLESS continues to call the legacy tester.
 
 ## Quick start
 
 1. Download the Windows EXE or Source ZIP from [GitHub Releases](https://github.com/xiaobei206/CF-IP-Finder/releases).
-2. Run `CF-IP-Finder-0.1.4-Windows-x64.exe`, or install Python 3.10+ with Tkinter and launch `run.bat` from the source package.
+2. Run `CF-IP-Finder-0.1.5-Windows-x64.exe`, or install Python 3.10+ with Tkinter and launch `run.bat` from the source package.
 3. Paste target ranges or import Shodan IPs, create a task, then manually run each stage.
 4. Configure Xray-core and a VLESS URI before the VLESS stage.
 5. Export the complete CSV/JSON, CF-hit IP list, plain IP list, or VLESS URI list.

@@ -10,7 +10,7 @@ py -3 cf_ip_finder.py --self-test
 py -3 -m unittest discover -s tests -v
 ```
 
-The built-in self-test is offline and exercises core parsing, persistence, candidate pipeline, sorting selection, exports, VLESS URI replacement and manual-stage runner wiring. Unit tests add smaller direct checks, including positive Top-N ranking, zero-means-all behavior for unresponsive/failed candidates, snapshot immutability, strict VLESS cohort boundaries, 0.1.2 legacy-task migration, and SQLite reopen recovery. These do not prove real public IP availability or user's ISP performance.
+The built-in self-test is offline and exercises core parsing, persistence, candidate pipeline, sorting selection, exports, VLESS URI replacement and manual-stage runner wiring. The 0.1.5 unit tests additionally mock direct selected-IP PING/TCPING/ASN/VLESS actions and assert that they do not mutate global stage state or funnel snapshots. Unit tests add smaller direct checks, including positive Top-N ranking, zero-means-all behavior for unresponsive/failed candidates, snapshot immutability, strict VLESS cohort boundaries, 0.1.2 legacy-task migration, and SQLite reopen recovery. These do not prove real public IP availability or user's ISP performance.
 
 ## GitHub Actions
 
@@ -30,7 +30,7 @@ Before release:
 - [ ] Update `VERSION` and `APP_VERSION` to the same new version.
 - [ ] Update `CHANGELOG_CN.md`, `README_CN.md`, `README.md`, and build naming if required.
 - [ ] Append to `dev_log.md` and update `SESSION_HANDOFF.md` / `REFACTOR_ROADMAP.md`.
-- [ ] Add tests for the changed behavior.
+- [x] Add tests for selected-IP exact target sets, funnel immutability and legacy VLESS delegation.
 - [ ] `py_compile`, built-in `--self-test`, unittest discovery pass.
 - [ ] Verify no task database, VLESS UUID, IP scan result, private token or `xray.exe` is staged.
 - [ ] Commit to `main` with message `release: vX.Y.Z`.

@@ -1,4 +1,4 @@
-# Architecture — CF IP Finder 0.1.4
+# Architecture — CF IP Finder 0.1.5
 
 ## 1. Runtime overview
 
@@ -21,7 +21,7 @@
 | TLS | `tls_probe`; supplemental handshake/trace diagnostics |
 | Network metadata | `_ripestat_json`, `route_info_probe` |
 | Persistence | `TaskStore`, SQLite schema/migrations, `write_stage_file` |
-| Scheduling | `ScanRunner`, `ManualStageRunner` |
+| Scheduling | `ScanRunner`, `ManualStageRunner`, `ManualSelectionRunner` |
 | Xray helper | locate/download Xray, config path settings |
 | Output | CSV/TXT/VLESS/JSON exports and CF candidate list |
 | UI | `App`, mode toggles, stage buttons, column sorting, progress and logs |
@@ -61,6 +61,14 @@ Do not move this code into the GUI module or add a parallel implementation witho
 - Ties use PING loss or TCPING success percentage and maximum latency as secondary ranking signals. Missing latency sorts last.
 - Selection is persisted in SQLite and the two *_selected.txt snapshots. Resume reuses it; re-filtering requires a user-confirmed rerun after the stage is complete. UI column sorting never changes the selection.
 - VLESS still uses the legacy full-download tester; only its own download result determines final speed ranking.
+
+### Direct diagnostics from selected rows (0.1.5)
+
+The Treeview uses extended selection and IP-based row IDs. The context menu can launch a separate ManualSelectionRunner for exactly the selected IP list. It supports PING, TCPING, VLESS speed, and route/ASN queries.
+
+This runner shares the established per-IP worker/result mappings but calls the optional record_stage=False mode of _run_stage: results are committed in SQLite, while the global stages, active_stage, stage_selections, stage_candidates, and global stage snapshot files are not modified. It bypasses the global Top-N funnel only for the explicit manual request. VLESS still uses legacy_tester.validate_xray_config and legacy_tester.test_one_ip; no parallel download implementation exists.
+
+The UI preserves selected IPs across refreshes by using each IP as the stable Treeview item ID. A right-click on a selected row preserves the multi-selection; a right-click on an unselected row selects only that row.
 
 ### Shodan mode
 
