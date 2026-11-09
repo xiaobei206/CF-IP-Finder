@@ -1,8 +1,8 @@
 # Session Handoff — CF IP Finder
 
-**当前仓库版本：0.1.3**  
+**当前仓库版本：0.1.4（已发布）**  
 **当前主分支：`main`**  
-**当前开发基线：0.1.3 两级候选漏斗**
+**当前开发基线：0.1.4 两级候选漏斗边界修正**
 
 ## 1. 当前实现摘要
 
@@ -90,3 +90,15 @@ Self-test passed: CIDR/Shodan import, stage checkpoints, Ping/TCPing schema, ASN
 ## 6. 新 GPT 接手动作
 
 先读 `AI_BOOTSTRAP_PROMPT.md` 和 `AI_DEVELOPMENT_PROTOCOL.md`，再检查 `main`、`VERSION`、GitHub Releases 和 Actions；不要让用户再次提供源码 ZIP。仓库本身就是源代码。完成接手总结后按用户明确的目标直接继续。
+
+## 7. 下一版本计划 — 0.1.5 选中 IP 右键诊断
+
+本轮目标是在结果表增加真正支持 Ctrl/Shift 多选的上下文菜单，为当前选中的 IP 直接执行 PING、TCPING、VLESS 完整文件测速或 ASN/BGP 查询，并支持复制/导出所选 IP。
+
+关键边界：
+- 右键位于已选行时保留整个选择组；右键未选行时切换为该行单选；空白区域不弹出行操作菜单。
+- 手动诊断只对明确选中的 IP 执行，不受全局 Top-N 队列限制；结果逐 IP 写回既有 SQLite 字段。
+- 手动诊断不得更改全局 stages 状态、active_stage、stage_selections / stage_candidates 或候选快照文件。
+- 定期刷新结果表时按 IP 稳定 iid 恢复选择，避免刷新后多选丢失。
+- VLESS 必须继续调用 cf_ip_tester_legacy.py 原有的配置预检和完整文件下载实现，不复制、不重写旧引擎。
+- 全局阶段与手动诊断互斥，保留现有暂停/停止交互。
