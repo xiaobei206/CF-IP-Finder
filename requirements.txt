@@ -1,0 +1,2 @@
+# Runtime: Python 3.10+ standard library only.
+# Optional EXE packaging: PyInstaller (installed by build_exe.bat).
