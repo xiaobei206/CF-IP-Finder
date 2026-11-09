@@ -1,8 +1,8 @@
 # Refactor Roadmap — CF IP Finder
 
-当前基线：0.1.3。路线图是优先级建议，不代表这些功能已经完成。用户真实反馈优先于路线图。
+当前基线：0.1.4。路线图是优先级建议，不代表这些功能已经完成。用户真实反馈优先于路线图。
 
-## 已完成 — 0.1.3 候选漏斗
+## 已完成 — 0.1.4 候选漏斗与队列边界修正
 
 - [x] PING 对全部 CF 命中执行，并按可配置前 N 生成 TCPING 候选；0=全部，包含无响应。
 - [x] TCPING 对固定候选重复探测并按可配置前 N 生成 VLESS 候选；0=全部，包含失败/无响应。
@@ -10,15 +10,15 @@
 - [x] 阶段重跑需要显式确认重新筛选；既有 IP 结果保留。
 - [x] 离线单元测试与 Windows/Ubuntu CI。
 
-## P0 — 0.1.3 实机验证
+## P0 — 0.1.4 实机验证
 
-- [ ] GitHub Actions Windows runner 完成 v0.1.4 自检和 PyInstaller onefile 构建。
-- [ ] 发布 `v0.1.4`，提供 EXE、源码 ZIP、SHA256SUMS。
+- [x] GitHub Actions Windows runner 完成 v0.1.4 自检和 PyInstaller onefile 构建。
+- [x] 发布 `v0.1.4`，提供 EXE、源码 ZIP、SHA256SUMS。
 - [ ] 用户在 Windows 10/11 实机运行，确认首次启动、Xray 下载/选择、任务目录、暂停/恢复。
 - [ ] 用用户的真实 VLESS 模板和测速 URL 测试完整下载，记录真实错误信息，不暴露 UUID。
 - [ ] 对 6700 个真实 Shodan IP 验证 CF 探测耗时、候选量、系统资源和 GUI 刷新体验。
 
-## P1 — 稳定性补强（优先考虑 0.1.3）
+## P1 — 稳定性补强（优先考虑 0.1.5）
 
 - [ ] 建立 `tests/` 单元测试：HTTP parser、CF feature scoring、PING 输出解析（中英 Windows）、TCPING 统计、列排序和缺失值、ASN Top-N。
 - [ ] 为阶段暂停/停止/窗口关闭增加压力测试，验证单 IP 结果提交和活动任务状态恢复。

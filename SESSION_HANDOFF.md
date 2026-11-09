@@ -74,14 +74,14 @@ Self-test passed: CIDR/Shodan import, stage checkpoints, Ping/TCPing schema, ASN
 - TCPING 只测 TCP connect，不代表代理性能。
 - ASN/BGP 是 RIPEstat 公共路由观测，不等于当前 ISP 的真实路径或精品线路类型。
 - VLESS 真实测速需要外部 `xray.exe` 和有效模板；不同 transport/security 的支持继承自 legacy tester。
-- v0.1.2 与 v0.1.3 已由 GitHub Actions 成功完成 Windows EXE 构建和 Release；当前 0.1.4 待 Actions 验证。
+- v0.1.2、v0.1.3、v0.1.4 均已由 GitHub Actions 成功完成 Windows EXE 构建和 Release；当前最新版本为 0.1.4。
 
 ## 5. 下一步建议
 
 按优先级：
 
 1. 确认首次 GitHub Actions Windows 构建和 Release 资产均成功。
-2. 让用户在 Windows 10/11 实机使用 0.1.2：导入真实 Shodan 样本，观察 CF 命中数量、PING/TCPING 排序、VLESS 下载、ASN 前 30 和断点恢复。
+2. 让用户在 Windows 10/11 实机使用 0.1.4：导入真实 Shodan 样本，观察 CF 命中数量、PING/TCPING 排序、VLESS 下载、ASN 前 30 和断点恢复。
 3. 根据真实反馈修复，不要预先大规模重构。
 4. 补充独立单元测试，特别是 HTTP 响应解析、CF 命中判定、排序空值、SQLite 突然停止恢复、Shodan ASN Top-N。
 5. 研究长任务 UI 响应和大量结果表格刷新性能；必要时批量 UI 刷新但保持数据库单 IP 持久化。
@@ -89,4 +89,4 @@ Self-test passed: CIDR/Shodan import, stage checkpoints, Ping/TCPing schema, ASN
 
 ## 6. 新 GPT 接手动作
 
-先读 `AI_BOOTSTRAP_PROMPT.md` 和 `AI_DEVELOPMENT_PROTOCOL.md`，再检查 `main`、`VERSION`、GitHub Releases 和 Actions；不要让用户再次提供 0.1.2 ZIP。仓库本身就是源代码。完成接手总结后按用户明确的目标直接继续。
+先读 `AI_BOOTSTRAP_PROMPT.md` 和 `AI_DEVELOPMENT_PROTOCOL.md`，再检查 `main`、`VERSION`、GitHub Releases 和 Actions；不要让用户再次提供源码 ZIP。仓库本身就是源代码。完成接手总结后按用户明确的目标直接继续。
