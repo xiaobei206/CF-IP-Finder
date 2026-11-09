@@ -130,5 +130,32 @@ class CandidateFunnelTests(unittest.TestCase):
             reopened.close()
 
 
+    def test_speed_limit_zero_is_bounded_by_actual_tcping_cohort(self):
+        # Only the two fastest PING results are actually sent to TCPING.
+        self.store.prepare_stage_selection("tcping", 2)
+        for ip in ("192.0.2.1", "192.0.2.2"):
+            self.store.save_result(ip, {
+                "tcping_status": "failed", "tcping_ms": None, "tcping_success_pct": 0.0
+            })
+        self.store.stage_start("tcping")
+        self.store.stage_finish("tcping", 2)
+
+        # 0=all means all TCPING candidates, including failures — not every CF hit.
+        selection = self.store.prepare_stage_selection("speed", 0)
+        self.assertEqual(selection["item_count"], 2)
+        self.assertEqual(self.store.stage_selection_ips("speed"), ["192.0.2.1", "192.0.2.2"])
+
+    def test_legacy_task_without_tcping_snapshot_uses_completed_tcping_rows(self):
+        # 0.1.2 tasks have a completed TCPING stage but no durable selection table rows.
+        for ip in [f"192.0.2.{i}" for i in range(1, 6)]:
+            self.store.save_result(ip, {
+                "tcping_status": "failed", "tcping_ms": None, "tcping_success_pct": 0.0
+            })
+        self.store.stage_start("tcping")
+        self.store.stage_finish("tcping", 5)
+        selection = self.store.prepare_stage_selection("speed", 0)
+        self.assertEqual(selection["item_count"], 5)
+
+
 if __name__ == "__main__":
     unittest.main()

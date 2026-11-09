@@ -1,4 +1,4 @@
-# Architecture — CF IP Finder 0.1.3
+# Architecture — CF IP Finder 0.1.4
 
 ## 1. Runtime overview
 
@@ -57,7 +57,7 @@ Do not move this code into the GUI module or add a parallel implementation witho
 
 - PING runs for all CF hits; no ICMP reply is diagnostic only.
 - ping_top_n defaults to 500. A positive value selects the lowest PING average latency; zero selects every CF hit, including no-reply IPs.
-- TCPING runs only the stored PING cohort. tcping_top_n defaults to 100. A positive value selects the lowest TCP connect average latency; zero selects every TCPING cohort member, including failed/no-latency IPs.
+- TCPING runs only the stored PING cohort. tcping_top_n defaults to 100. A positive value selects the lowest TCP connect average latency; zero selects every TCPING cohort member, including failed/no-latency IPs. The VLESS cohort is then drawn strictly from that saved TCPING cohort; it never expands back to all CF hits.
 - Ties use PING loss or TCPING success percentage and maximum latency as secondary ranking signals. Missing latency sorts last.
 - Selection is persisted in SQLite and the two *_selected.txt snapshots. Resume reuses it; re-filtering requires a user-confirmed rerun after the stage is complete. UI column sorting never changes the selection.
 - VLESS still uses the legacy full-download tester; only its own download result determines final speed ranking.

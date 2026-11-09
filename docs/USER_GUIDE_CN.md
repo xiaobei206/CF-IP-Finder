@@ -46,7 +46,7 @@
 - TLS 探测和 `/cdn-cgi/trace` 是补充信息；如果 HTTP 命中已经成立，TLS 错误不应自动抹掉 HTTP 候选。
 - 最终要用自己的 VLESS 模板下载测试。真实下载成功才说明当前配置和网络路径可用。
 
-## 5. PING 与 TCPING 候选漏斗（0.1.3）
+## 5. PING 与 TCPING 候选漏斗（0.1.4）
 
 两种模式共用同一套筛选逻辑。CF 命中 IP 全部进入 PING；PING 完成后，程序按平均延迟从低到高筛选进入 TCPING 的队列；TCPING 完成后，再按 TCP 443 connect 平均耗时从低到高筛选进入 VLESS 测速的队列。
 
@@ -56,7 +56,7 @@
 - TCPING 默认重复测试 5 次。相同平均耗时时，以成功率和最大耗时作为次级排序参考。
 - 两个候选队列会保存为任务数据库记录和 stages/05_ping_selected.txt、stages/06_tcping_selected.txt。暂停、退出后恢复不会按最新表格排序或新填写的 N 偷偷改变已开始的队列。
 - 若某个 TCPING/VLESS 阶段已经完成，再次点击执行会询问是否按当前 N 重新筛选；确认后生成新队列，之前已完成的单 IP 结果保留。
-- VLESS 速度仍完全按旧版引擎下载文件的实际 MB/s 排名，不混入 PING/TCPING 延迟。
+- VLESS 候选严格来自实际进入 TCPING 的那一批 IP；填 0 是这些 TCPING 候选全部（失败/无响应也包括），不会重新扩展到未入选的 CF IP。对于 0.1.2 旧任务，没有保存候选快照时会用已写入 TCPING 结果的 CF IP 兼容恢复。\n- VLESS 速度仍完全按旧版引擎下载文件的实际 MB/s 排名，不混入 PING/TCPING 延迟。
 
 ## 6. PING 与 TCPING
 

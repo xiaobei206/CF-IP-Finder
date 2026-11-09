@@ -12,8 +12,8 @@
 
 ## P0 — 0.1.3 实机验证
 
-- [ ] GitHub Actions Windows runner 完成自检和 PyInstaller onefile 构建。
-- [ ] 发布 `v0.1.2`，提供 EXE、源码 ZIP、SHA256SUMS。
+- [ ] GitHub Actions Windows runner 完成 v0.1.4 自检和 PyInstaller onefile 构建。
+- [ ] 发布 `v0.1.4`，提供 EXE、源码 ZIP、SHA256SUMS。
 - [ ] 用户在 Windows 10/11 实机运行，确认首次启动、Xray 下载/选择、任务目录、暂停/恢复。
 - [ ] 用用户的真实 VLESS 模板和测速 URL 测试完整下载，记录真实错误信息，不暴露 UUID。
 - [ ] 对 6700 个真实 Shodan IP 验证 CF 探测耗时、候选量、系统资源和 GUI 刷新体验。

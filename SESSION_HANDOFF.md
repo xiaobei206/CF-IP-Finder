@@ -74,7 +74,7 @@ Self-test passed: CIDR/Shodan import, stage checkpoints, Ping/TCPing schema, ASN
 - TCPING 只测 TCP connect，不代表代理性能。
 - ASN/BGP 是 RIPEstat 公共路由观测，不等于当前 ISP 的真实路径或精品线路类型。
 - VLESS 真实测速需要外部 `xray.exe` 和有效模板；不同 transport/security 的支持继承自 legacy tester。
-- 0.1.2 尚未由仓库 CI 构建 Windows EXE（本次首次发布流程会建立 Actions）。
+- v0.1.2 与 v0.1.3 已由 GitHub Actions 成功完成 Windows EXE 构建和 Release；当前 0.1.4 待 Actions 验证。
 
 ## 5. 下一步建议
 

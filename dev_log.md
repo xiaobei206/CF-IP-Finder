@@ -38,3 +38,11 @@
 - 新增 stage_selections / stage_candidates 表和 05_ping_selected.txt / 06_tcping_selected.txt。数据库是权威快照；暂停/恢复始终沿用已保存的候选集合。完成后再次点击阶段并确认才重算队列。
 - 没有修改 cf_ip_tester_legacy.py；VLESS 实测仍由历史 CFIPTester 完整文件下载引擎完成。
 - 新增 8 项漏斗单元测试；等待 GitHub Actions 对 Windows/Ubuntu 执行编译、自检、单元测试并打包 Windows EXE。
+
+
+## 2026-11-10 — v0.1.4 队列边界修正
+- 发布后代码审阅发现：当第一级 PING Top-N 小于 CF 命中数量时，speed 队列曾以所有 CF candidates 作为查询基础。N=0 可能把没有进入 TCPING 的 IP 也送入 VLESS，超出了“全部 TCPING 候选”的语义。
+- 修正为优先以持久化的 `stage_candidates(target_stage='tcping')` 作为 VLESS 的唯一来源，0=全部包含这个 cohort 中 TCPING 失败/无响应项，但不会扩张到未入选 CF IP。
+- 对 0.1.2 任务增加兼容：旧任务无 TCPING selection snapshot，回退到已写入 `tcping_status` 的 CF 候选作为已测 TCPING 集合。
+- 新增两个回归测试：VLESS 0=全部仍限于真实 TCPING cohort；旧数据库无 snapshot 可以恢复。
+- `cf_ip_tester_legacy.py` 未修改。

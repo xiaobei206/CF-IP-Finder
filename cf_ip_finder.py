@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""CF IP Finder 0.1.3 - staged IPv4 scanner and VLESS/Xray tester.
+"""CF IP Finder 0.1.4 - staged IPv4 scanner and VLESS/Xray tester.
 Python 3.10+; standard library only. Windows GUI uses tkinter.
 """
 from __future__ import annotations
@@ -34,7 +34,7 @@ from typing import Any, Iterable
 import cf_ip_tester_legacy as legacy_tester
 
 APP_NAME = "CF IP Finder"
-APP_VERSION = "0.1.3"
+APP_VERSION = "0.1.4"
 DEFAULT_SPEED_URL = "http://speedtest.tyo11.jp.leaseweb.net/10mb.bin"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "CF-IP-Finder" if os.name == "nt" else Path.home() / ".cf-ip-finder"
 
@@ -631,11 +631,24 @@ class TaskStore:
             ))
             snapshot_name = "05_ping_selected.txt"
         else:
-            rows = list(self.conn.execute(
-                "SELECT ip,tcping_ms AS metric,tcping_success_pct AS quality,"
-                "tcping_max_ms AS max_metric,seq FROM ips "
-                "WHERE cf_candidate=1 ORDER BY seq ASC"
-            ))
+            tcping_selection = self.stage_selection_info("tcping")
+            if tcping_selection:
+                # New tasks: the VLESS cohort must be bounded by the exact TCPING cohort,
+                # including its failed/unresponsive members when the user selects 0=all.
+                rows = list(self.conn.execute(
+                    "SELECT i.ip,i.tcping_ms AS metric,i.tcping_success_pct AS quality,"
+                    "i.tcping_max_ms AS max_metric,i.seq "
+                    "FROM stage_candidates sc JOIN ips i ON i.ip=sc.ip "
+                    "WHERE sc.target_stage='tcping' ORDER BY sc.rank ASC"
+                ))
+            else:
+                # Backward compatibility for 0.1.2 tasks, which had no saved TCPING cohort:
+                # all CF candidates with a recorded TCPING result formed that old cohort.
+                rows = list(self.conn.execute(
+                    "SELECT ip,tcping_ms AS metric,tcping_success_pct AS quality,"
+                    "tcping_max_ms AS max_metric,seq FROM ips "
+                    "WHERE cf_candidate=1 AND tcping_status IS NOT NULL ORDER BY seq ASC"
+                ))
             rows.sort(key=lambda r: (
                 r["metric"] is None,
                 float(r["metric"]) if r["metric"] is not None else float("inf"),

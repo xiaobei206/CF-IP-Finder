@@ -1,6 +1,6 @@
 # CF IP Finder
 
-**Current version: 0.1.3** · Windows 10/11 · Python 3.10+ · standard-library runtime
+**Current version: 0.1.4** · Windows 10/11 · Python 3.10+ · standard-library runtime
 
 CF IP Finder is a staged IPv4 candidate discovery, Cloudflare-feature screening, connectivity diagnostics, and VLESS download-testing desktop tool. The user supplies the scan targets and controls each stage.
 
@@ -14,7 +14,7 @@ Both modes now use a candidate funnel: all CF hits are pinged, then PING Top-N (
 ## Quick start
 
 1. Download the Windows EXE or Source ZIP from [GitHub Releases](https://github.com/xiaobei206/CF-IP-Finder/releases).
-2. Run `CF-IP-Finder-0.1.3-Windows-x64.exe`, or install Python 3.10+ with Tkinter and launch `run.bat` from the source package.
+2. Run `CF-IP-Finder-0.1.4-Windows-x64.exe`, or install Python 3.10+ with Tkinter and launch `run.bat` from the source package.
 3. Paste target ranges or import Shodan IPs, create a task, then manually run each stage.
 4. Configure Xray-core and a VLESS URI before the VLESS stage.
 5. Export the complete CSV/JSON, CF-hit IP list, plain IP list, or VLESS URI list.
