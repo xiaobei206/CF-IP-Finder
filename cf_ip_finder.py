@@ -775,15 +775,20 @@ class ScanRunner:
                 return False
         return not self.stop_event.is_set()
 
-    def _run_stage(self, name: str, ips: list[str], worker, concurrency: int):
-        self.store.stage_start(name)
+    def _run_stage(self, name: str, ips: list[str], worker, concurrency: int,
+                   record_stage: bool = True, event_label: str | None = None):
+        display_name = event_label or name
+        if record_stage:
+            self.store.stage_start(name)
         if not ips:
-            self.emit("log", f"{name}：没有待处理记录，标记为完成（0 条）")
-            self.store.stage_finish(name, 0)
+            suffix = "，标记为完成（0 条）" if record_stage else ""
+            self.emit("log", f"{display_name}：没有待处理记录{suffix}")
+            if record_stage:
+                self.store.stage_finish(name, 0)
             return True
-        self.emit("stage", name)
+        self.emit("stage", display_name)
         concurrency = max(1, concurrency)
-        self.emit("log", f"{name}：开始处理 {len(ips)} 个 IP，并发 {concurrency}")
+        self.emit("log", f"{display_name}：开始处理 {len(ips)} 个 IP，并发 {concurrency}")
         completed = 0
         errors = 0
         next_index = 0
@@ -822,14 +827,15 @@ class ScanRunner:
                     self.store.save_result(ip, result)
                     completed += 1
                     if completed % 10 == 0 or completed == len(ips):
-                        self.emit("progress", (name, completed, len(ips)))
-                    if completed % 100 == 0:
+                        self.emit("progress", (display_name, completed, len(ips)))
+                    if record_stage and completed % 100 == 0:
                         self.store.write_stage_file(name)
 
         if self.stop_event.is_set():
             return False
-        self.store.stage_finish(name, completed)
-        self.emit("log", f"{name}：完成 {completed} 个，异常 {errors}")
+        if record_stage:
+            self.store.stage_finish(name, completed)
+        self.emit("log", f"{display_name}：完成 {completed} 个，异常 {errors}")
         return True
 
     @staticmethod
@@ -1053,6 +1059,84 @@ class ManualStageRunner(ScanRunner):
     @staticmethod
     def stage_label(stage: str) -> str:
         return {"port": "扫描 443", "http": "CF 命中检测", "ping": "PING", "tcping": "TCPING", "speed": "VLESS 实际测速", "route": "ASN / BGP 查询"}.get(stage, stage)
+
+class ManualSelectionRunner(ScanRunner):
+    """Run diagnostics against an explicit IP list without mutating global stage queues."""
+    def __init__(self, store: TaskStore, config: dict[str, Any], emit, mode: str,
+                 stage: str, ips: list[str]):
+        super().__init__(store, config, emit)
+        self.mode = mode
+        self.stage_name = stage
+        self.ips = list(dict.fromkeys(str(ip).strip() for ip in ips if str(ip).strip()))
+
+    def run(self):
+        stage = self.stage_name
+        label = {"ping": "PING", "tcping": "TCPING", "speed": "VLESS 测速",
+                 "route": "ASN / BGP 查询"}.get(stage, stage)
+        try:
+            if not self.ips:
+                raise ValueError("没有选中 IP")
+            cfg = self.cfg
+            probe_workers = max(1, min(300, int(cfg.get("probe_workers", 100))))
+            if stage == "ping":
+                count = int(cfg.get("ping_count", 3))
+                timeout = float(cfg.get("ping_timeout", 1.0))
+                worker = lambda ip: ping_probe(ip, count, timeout)
+                concurrency = probe_workers
+            elif stage == "tcping":
+                count = int(cfg.get("tcping_count", 5))
+                timeout = float(cfg.get("tcping_timeout", 1.5))
+                worker = lambda ip: tcping_probe(ip, count, timeout)
+                concurrency = probe_workers
+            elif stage == "speed":
+                uri = (cfg.get("vless_uri") or "").strip()
+                if not uri:
+                    raise ValueError("请先填写 VLESS 模板")
+                xray_path = (cfg.get("xray_path") or "").strip()
+                if not xray_path or not Path(xray_path).is_file():
+                    raise FileNotFoundError("没有找到 xray.exe，请先下载或选择 Xray-core")
+                legacy_template = legacy_tester.parse_vless_link(uri)
+                valid, detail = legacy_tester.validate_xray_config(xray_path, legacy_template, self.ips[0])
+                if not valid:
+                    raise RuntimeError("Xray 配置校验失败：" + detail)
+                speed_timeout = max(5, int(cfg.get("speed_timeout", 30)))
+                url = cfg.get("speed_url", DEFAULT_SPEED_URL)
+
+                def worker(ip):
+                    result = legacy_tester.test_one_ip(
+                        ip, xray_path, legacy_template, url, speed_timeout, self.stop_event
+                    )
+                    return {
+                        "vless_status": "success" if result.get("ok") else "failed",
+                        "speed_mbps": round(float(result["speed"]), 3)
+                        if result.get("ok") and result.get("speed") is not None else 0.0,
+                        "peak_mbps": None,
+                        "download_bytes": int(result.get("bytes") or 0),
+                        "ttfb_ms": float(result["latency"]) if result.get("latency") is not None else None,
+                        "speed_seconds": None,
+                        "speed_requests": 1 if result.get("ok") else 0,
+                        "vless_error": str(result.get("error") or "")[:400],
+                    }
+
+                concurrency = max(1, min(8, int(cfg.get("speed_workers", 1))))
+            elif stage == "route":
+                worker = route_info_probe
+                concurrency = max(1, min(8, int(cfg.get("route_workers", 4))))
+            else:
+                raise ValueError(f"未知手动诊断类型：{stage}")
+
+            self.emit("log", f"手动 {label}：只执行明确选中的 {len(self.ips):,} 个 IP；不更改全局阶段状态或候选队列")
+            ok = self._run_stage(
+                stage, self.ips, worker, concurrency,
+                record_stage=False, event_label=f"手动 {label}"
+            )
+            state = "stopped" if self.stop_event.is_set() else ("completed" if ok else "paused")
+            self.emit("done", (f"manual_{stage}", state))
+        except Exception as exc:
+            self.store.add_log("ERROR", f"manual_{stage}: {str(exc)[:240]}")
+            self.emit("log", f"手动 {label} 失败：{exc}")
+            self.emit("done", (f"manual_{stage}", "error"))
+
 
 # ----------------------------- Xray downloader / exports -----------------------------
 
@@ -1352,7 +1436,7 @@ class App:
                               "asn": ("asn", False), "server": ("http_server", False)}
         self.column_labels = {"ip": "IP", "port": "443 ms", "cf": "CF 命中", "cfscore": "CF 分", "ping": "PING ms", "loss": "丢包率 %",
                               "tcping": "TCPING ms", "tcpok": "TCP 成功率 %", "speed": "VLESS MB/s", "ttfb": "TTFB ms", "asn": "ASN / 组织", "server": "Server / CF-RAY"}
-        self.tree = ttk.Treeview(result_frame, columns=cols, show="headings", height=13)
+        self.tree = ttk.Treeview(result_frame, columns=cols, show="headings", height=13, selectmode="extended")
         widths = {"ip": 125, "port": 75, "cf": 75, "cfscore": 65, "ping": 80, "loss": 75, "tcping": 90, "tcpok": 90, "speed": 100, "ttfb": 75, "asn": 190, "server": 220}
         for c in cols:
             self._update_heading(c)
@@ -1364,6 +1448,17 @@ class App:
         xsb.pack(fill="x")
         self.tree.configure(yscrollcommand=ysb.set, xscrollcommand=xsb.set)
         self.tree.bind("<Double-1>", self._copy_selected_ip)
+        self.tree.bind("<Button-3>", self._show_result_context_menu)
+        self.result_context_menu = tk.Menu(self.root, tearoff=0)
+        self.result_context_menu.add_command(label="已选 0 个 IP", state="disabled")
+        self.result_context_menu.add_separator()
+        self.result_context_menu.add_command(label="手动测试 PING", command=lambda: self.run_selected_stage("ping"))
+        self.result_context_menu.add_command(label="手动测试 TCPING", command=lambda: self.run_selected_stage("tcping"))
+        self.result_context_menu.add_command(label="手动 VLESS 下载测速", command=lambda: self.run_selected_stage("speed"))
+        self.result_context_menu.add_command(label="手动查询 ASN / BGP", command=lambda: self.run_selected_stage("route"))
+        self.result_context_menu.add_separator()
+        self.result_context_menu.add_command(label="复制选中 IP", command=self._copy_selected_ip)
+        self.result_context_menu.add_command(label="导出选中 IP…", command=self._export_selected_ips)
 
         log_frame = ttk.LabelFrame(outer, text="运行日志 / 阶段记录", padding=6)
         log_frame.pack(fill="both", expand=True, pady=(3, 0))
@@ -1708,6 +1803,12 @@ class App:
         self.pause_btn.configure(state="disabled", text="暂停当前步骤")
         self.stop_btn.configure(state="disabled")
         labels = {k: v for k, v, _ in self.STAGES}
+        labels.update({
+            "manual_ping": "手动 PING",
+            "manual_tcping": "手动 TCPING",
+            "manual_speed": "手动 VLESS 测速",
+            "manual_route": "手动 ASN / BGP 查询",
+        })
         self.status_var.set(f"{labels.get(stage, stage)}：{ {'completed':'完成', 'paused':'已暂停，可继续', 'stopped':'已停止，可恢复', 'error':'失败，请查看日志'}.get(state,state)}")
         self.stage_var.set(self.status_var.get())
         if state == "completed":
@@ -1740,6 +1841,7 @@ class App:
     def _render_results(self):
         if not hasattr(self, "tree") or not self.store:
             return
+        selected_before_refresh = set(self.tree.selection())
         for item in self.tree.get_children():
             self.tree.delete(item)
         rows = self.store.all_rows()
@@ -1761,7 +1863,11 @@ class App:
                     f"{r['tcping_success_pct']:.1f}" if r["tcping_success_pct"] is not None else "",
                     f"{r['speed_mbps']:.3f}" if r["speed_mbps"] else (r["vless_status"] or ""),
                     f"{r['ttfb_ms']:.2f}" if r["ttfb_ms"] is not None else "", net, server)
-            self.tree.insert("", "end", values=vals)
+            ip_iid = str(r["ip"])
+            self.tree.insert("", "end", iid=ip_iid, values=vals)
+        restore_selection = [ip for ip in selected_before_refresh if self.tree.exists(ip)]
+        if restore_selection:
+            self.tree.selection_set(restore_selection)
         for c in self.column_fields:
             self._update_heading(c)
 
@@ -1815,13 +1921,119 @@ class App:
                 self.events.put(("xray_error", str(exc)))
         threading.Thread(target=worker, daemon=True).start()
 
+    def _selected_result_ips(self) -> list[str]:
+        ips: list[str] = []
+        for item in self.tree.selection():
+            values = self.tree.item(item, "values")
+            ip = str(values[0]) if values else str(item)
+            if ip and ip not in ips:
+                ips.append(ip)
+        return ips
+
+    def _show_result_context_menu(self, event):
+        if not hasattr(self, "result_context_menu"):
+            return "break"
+        row_id = self.tree.identify_row(event.y)
+        if not row_id:
+            return "break"
+        if self.runner_thread and self.runner_thread.is_alive():
+            self.status_var.set("当前步骤运行中，请完成或停止后再发起手动诊断")
+            return "break"
+        if row_id not in self.tree.selection():
+            self.tree.selection_set(row_id)
+        ips = self._selected_result_ips()
+        if not ips:
+            return "break"
+        self.result_context_menu.entryconfigure(0, label=f"已选 {len(ips):,} 个 IP")
+        try:
+            self.result_context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.result_context_menu.grab_release()
+        return "break"
+
+    def run_selected_stage(self, stage: str):
+        if not self.store or not self.task_folder:
+            messagebox.showinfo(APP_NAME, "请先创建或恢复任务")
+            return
+        if self.runner_thread and self.runner_thread.is_alive():
+            messagebox.showwarning(APP_NAME, "当前步骤仍在运行，请先暂停或停止")
+            return
+        ips = self._selected_result_ips()
+        if not ips:
+            messagebox.showinfo(APP_NAME, "请先在结果表中选中一个或多个 IP")
+            return
+        if stage not in ("ping", "tcping", "speed", "route"):
+            messagebox.showerror(APP_NAME, "不支持的手动诊断类型")
+            return
+        if stage == "speed" and not messagebox.askyesno(
+            "手动 VLESS 测速",
+            f"将绕过全局 Top-N 漏斗，直接用当前 VLESS 模板和 Xray 测试选中的 {len(ips):,} 个 IP。\n"
+            "测试结果会更新这些 IP 的 VLESS 字段，但不会改变全局候选队列。\n\n继续吗？"
+        ):
+            return
+        try:
+            cfg = self._config_from_ui()
+            cfg["target_text"] = self.last_config.get("target_text", "")
+            cfg["mode"] = self.last_config.get("mode", self.mode_var.get())
+            atomic_write(self.task_folder / "task_config.json", json.dumps(cfg, ensure_ascii=False, indent=2))
+            self.last_config = cfg
+        except Exception as exc:
+            messagebox.showerror("参数检查", str(exc))
+            return
+        self._start_selected_stage(stage, ips)
+
+    def _start_selected_stage(self, stage: str, ips: list[str]):
+        if not self.store:
+            return
+        self.current_stage = f"manual_{stage}"
+        self.runner = ManualSelectionRunner(
+            self.store, self.last_config,
+            lambda kind, data: self.events.put((kind, data)),
+            self.last_config.get("mode", "local"), stage, ips
+        )
+
+        def run_with_power_guard():
+            set_windows_awake(True)
+            try:
+                self.runner.run()
+            finally:
+                set_windows_awake(False)
+
+        self.runner_thread = threading.Thread(target=run_with_power_guard, daemon=True)
+        self.runner_thread.start()
+        self.pause_btn.configure(state="normal", text="暂停当前步骤")
+        self.stop_btn.configure(state="normal")
+        labels = {"ping": "手动 PING", "tcping": "手动 TCPING",
+                  "speed": "手动 VLESS 测速", "route": "手动 ASN / BGP 查询"}
+        self.status_var.set(f"正在执行：{labels.get(stage, stage)}（{len(ips):,} 个 IP）")
+        self.stage_var.set(f"当前步骤：{labels.get(stage, stage)}")
+        self._update_stage_buttons(running=stage)
+
     def _copy_selected_ip(self, _event=None):
-        selected = self.tree.selection()
-        if selected:
-            ip = self.tree.item(selected[0], "values")[0]
+        ips = self._selected_result_ips()
+        if ips:
+            payload = "\n".join(ips)
             self.root.clipboard_clear()
-            self.root.clipboard_append(ip)
-            self.status_var.set(f"已复制 {ip}")
+            self.root.clipboard_append(payload)
+            self.status_var.set(f"已复制 {len(ips):,} 个 IP")
+
+    def _export_selected_ips(self):
+        ips = self._selected_result_ips()
+        if not ips:
+            messagebox.showinfo(APP_NAME, "请先选中一个或多个 IP")
+            return
+        path = filedialog.asksaveasfilename(
+            title="导出选中 IP", defaultextension=".txt",
+            initialfile=f"CF-IP-Finder-selected-{len(ips)}.txt",
+            filetypes=[("IP 列表", "*.txt"), ("所有文件", "*.*")]
+        )
+        if not path:
+            return
+        try:
+            Path(path).write_text("\n".join(ips) + "\n", encoding="utf-8")
+            self.status_var.set(f"已导出 {len(ips):,} 个 IP：{path}")
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"导出选中 IP 失败：{exc}")
 
     def on_close(self):
         if self.runner and self.runner_thread and self.runner_thread.is_alive():
