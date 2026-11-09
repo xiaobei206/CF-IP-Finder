@@ -8,7 +8,7 @@
 - [x] 以 IP 作为稳定 Treeview iid，刷新后恢复可见选中项。
 - [x] VLESS 手动测速继续复用 legacy tester 的 Xray 预检和完整文件下载逻辑。
 - [x] 新增离线回归测试，验证目标集、队列快照不变和 ASN/VLESS 手动执行边界。
-- [ ] 等待本轮 Release workflow 完成并核实 Windows EXE、源码 ZIP 与 SHA256SUMS。
+- [x] Release workflow run 42659741800 成功；Windows EXE、源码 ZIP 与 SHA256SUMS 均已核实存在。
 
 
 ## 已完成 — 0.1.4 候选漏斗与队列边界修正

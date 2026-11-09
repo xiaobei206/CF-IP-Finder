@@ -57,3 +57,5 @@
 - VLESS 手动测试仍调用 legacy_tester.parse_vless_link、validate_xray_config 和 test_one_ip，保持旧版配置预检及完整文件下载流程。
 - 新增 tests/test_manual_selection.py，验证直接选集与全局 Top-N 队列独立、ASN 不受 Shodan 默认 Top-N 限制，以及 VLESS 调用旧引擎。
 - 代码改动提交 8a5502376968af2ff9978aff2a19913e13f931fb 已通过 Windows/Ubuntu 离线编译、自检和单元测试；正式 Release 的 Windows 构建与资产由本次版本提交工作流验证。
+
+- Release 验证完成：v0.1.5 由 Actions run 42659741800 成功构建和发布；Ubuntu/Windows 离线验证、Windows EXE 打包、源码 ZIP、SHA256SUMS 与 GitHub Release 发布均成功。Release：https://github.com/xiaobei206/CF-IP-Finder/releases/tag/v0.1.5。用户本机真实网络/VLESS 性能仍未由 CI 覆盖。

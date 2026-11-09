@@ -1,6 +1,6 @@
 # Session Handoff — CF IP Finder
 
-**当前仓库版本：0.1.5（发布验证中）**  
+**当前仓库版本：0.1.5（已发布）**  
 **当前主分支：`main`**  
 **当前开发基线：0.1.5 选中 IP 右键手动诊断**
 
@@ -74,7 +74,7 @@ Self-test passed: CIDR/Shodan import, stage checkpoints, Ping/TCPing schema, ASN
 - TCPING 只测 TCP connect，不代表代理性能。
 - ASN/BGP 是 RIPEstat 公共路由观测，不等于当前 ISP 的真实路径或精品线路类型。
 - VLESS 真实测速需要外部 `xray.exe` 和有效模板；不同 transport/security 的支持继承自 legacy tester。
-- v0.1.2、v0.1.3、v0.1.4 均已由 GitHub Actions 成功完成 Windows EXE 构建和 Release；0.1.5 已加入选中 IP 手动诊断；本轮 Release 的最终 Actions/资产结果以 GitHub 发布工作流为准。
+- v0.1.2、v0.1.3、v0.1.4 均已由 GitHub Actions 成功完成 Windows EXE 构建和 Release；0.1.5 已发布；Actions run 42659741800 的 Windows/Ubuntu 验证、Windows EXE 构建和 Release 发布全部成功，EXE、源码 ZIP 与 SHA256SUMS 已核实存在。
 
 ## 5. 下一步建议
 
