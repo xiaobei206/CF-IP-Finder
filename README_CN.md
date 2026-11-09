@@ -1,4 +1,4 @@
-# CF IP Finder 0.1.2 中文说明
+# CF IP Finder 0.1.3 中文说明
 
 ## 项目定位
 
@@ -56,10 +56,12 @@ Shodan 未命中项不会参与后续阶段，但仍保留在 SQLite 原始记�
 - PING 次数/超时：可独立设置。
 - TCPING 次数/超时：可独立设置。
 - VLESS 不同 IP 的并发：默认 1，最高 8；建议 1，减少测速互相抢带宽。
+- PING 前 N 进入 TCPING：默认 500；填 0 表示全部，包含 PING 无响应 IP。
+- TCPING 前 N 进入 VLESS：默认 100；填 0 表示全部，包含 TCPING 失败/无响应 IP。
 - ASN 前 N：Shodan 默认 30，范围 1–1000。
 - 下载 URL 默认：`http://speedtest.tyo11.jp.leaseweb.net/10mb.bin`。
 
-PING 失败不会淘汰 CF 命中 IP，TCPING 失败也仅作为诊断记录。最终是否可用以 VLESS 代理能否成功下载为准。
+PING 失败不会淘汰 CF 命中 IP。完成 PING 后，按延迟升序生成 TCPING 队列；前 N 填 0 时全部进入，包括无响应 IP。TCPING 完成后按 connect 延迟升序生成 VLESS 队列；前 N 填 0 时全部进入，包括 TCPING 失败 IP。最终是否可用以 VLESS 代理能否成功下载为准。
 
 ## 安装和运行
 

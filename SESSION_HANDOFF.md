@@ -1,8 +1,8 @@
 # Session Handoff — CF IP Finder
 
-**当前仓库版本：0.1.2**  
+**当前仓库版本：0.1.3**  
 **当前主分支：`main`**  
-**当前开发基线：本仓库首次公开导入的 0.1.2 源码**
+**当前开发基线：0.1.3 两级候选漏斗**
 
 ## 1. 当前实现摘要
 
@@ -20,6 +20,14 @@ CF IP Finder 是 Windows Tkinter 应用，Python 3.10+，运行时仅使用标�
 - 解析并去重 IPv4；导入时标记 `port_status=open`、`port_source=Shodan 导入确认 443`，跳过重复 443 初筛。
 - CF 未命中 IP 不参与 Ping/TCPing/VLESS，但仍留在任务数据库原始记录中。
 - Shodan ASN 手动启动，默认只查 VLESS 成功并按速度排名前 N（默认 30）的 IP。
+
+### 候选漏斗（0.1.3）
+
+- PING 对全部 CF 命中 IP 执行，不因 ICMP 无响应删除候选。
+- ping_top_n 默认 500，0 表示全部（含 PING 无响应）；正数按 PING 延迟升序取前 N。
+- tcping_top_n 默认 100，0 表示全部（含 TCPING 失败/无响应）；正数按 TCP connect 平均延迟升序取前 N，成功率/最大耗时作并列次序参考。
+- TCPING 和 VLESS 的队列分别固定存入 SQLite stage_selections / stage_candidates，并写入 05_ping_selected.txt、06_tcping_selected.txt。运行中断后恢复不重新计算；阶段已完成后再次点击并确认才会重新生成快照。
+- VLESS 阶段仍调用 cf_ip_tester_legacy.py，速度排名与 Ping/TCPing 完全分离。
 
 ### 排序和导出
 

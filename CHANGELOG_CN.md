@@ -1,5 +1,20 @@
 # 更新日志
 
+## 0.1.3 — 2026-11-10
+
+### 新增
+- 在 Local CIDR 与 Shodan Import 两种模式中加入三级漏斗：CF 命中全部保留并 PING；PING 延迟升序筛选后执行 TCPING；TCPING connect 延迟升序筛选后执行 VLESS 完整文件下载测速。
+- 新增 PING 前 N→TCPING（默认 500）与 TCPING 前 N→测速（默认 100）设置；填 0 表示全部，不过滤无响应/失败候选。
+- 将两级候选队列持久化到 SQLite，并在任务目录生成 05_ping_selected.txt、06_tcping_selected.txt 快照；暂停、关闭和恢复均沿用既有队列。
+- 对已完成的 TCPING/VLESS 阶段再次执行时，允许用户确认按当前 N 重新筛选；已有单 IP 检测结果不会被清除。
+- 增加候选排名、0=全部、队列快照、断点恢复和旧任务数据库兼容测试。
+
+### 保持不变
+- VLESS 测速仍使用 cf_ip_tester_legacy.py 的原始完整文件下载实现；本版本未修改旧测速引擎。
+- 不把 Ping/TCPing 延迟混入 VLESS 下载速度排名；VLESS 最终排序仍按真实下载速度。
+- 不自动扩大用户授权范围，不调用 Shodan API，不自动查询 ASN。
+
+
 ## 0.1.2 — 2026-11-09
 
 - 增加本地网段模式与 Shodan 导入模式。

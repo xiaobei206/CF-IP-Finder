@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""CF IP Finder 0.1.2 - staged IPv4 scanner and VLESS/Xray tester.
+"""CF IP Finder 0.1.3 - staged IPv4 scanner and VLESS/Xray tester.
 Python 3.10+; standard library only. Windows GUI uses tkinter.
 """
 from __future__ import annotations
@@ -34,7 +34,7 @@ from typing import Any, Iterable
 import cf_ip_tester_legacy as legacy_tester
 
 APP_NAME = "CF IP Finder"
-APP_VERSION = "0.1.2"
+APP_VERSION = "0.1.3"
 DEFAULT_SPEED_URL = "http://speedtest.tyo11.jp.leaseweb.net/10mb.bin"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "CF-IP-Finder" if os.name == "nt" else Path.home() / ".cf-ip-finder"
 
@@ -423,6 +423,14 @@ CREATE TABLE IF NOT EXISTS ips (
 CREATE TABLE IF NOT EXISTS stages (name TEXT PRIMARY KEY, status TEXT NOT NULL, started_at TEXT, finished_at TEXT, item_count INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, level TEXT NOT NULL, message TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS stage_selections (
+ target_stage TEXT PRIMARY KEY, source_stage TEXT NOT NULL, limit_n INTEGER NOT NULL,
+ item_count INTEGER NOT NULL, generated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS stage_candidates (
+ target_stage TEXT NOT NULL, ip TEXT NOT NULL, rank INTEGER NOT NULL,
+ PRIMARY KEY(target_stage, ip), UNIQUE(target_stage, rank)
+);
 """
 
 
@@ -528,13 +536,25 @@ class TaskStore:
 
     @db_locked
     def pending_ips(self, stage: str, only_candidates: bool = True, limit: int | None = None) -> list[str]:
+        if stage in ("tcping", "speed"):
+            status_field = "tcping_status" if stage == "tcping" else "vless_status"
+            exists = self.conn.execute(
+                "SELECT 1 FROM stage_selections WHERE target_stage=?", (stage,)
+            ).fetchone()
+            if not exists:
+                return []
+            rows = self.conn.execute(
+                f"SELECT i.ip FROM stage_candidates sc JOIN ips i ON i.ip=sc.ip "
+                f"WHERE sc.target_stage=? AND i.{status_field} IS NULL ORDER BY sc.rank ASC",
+                (stage,)
+            )
+            return [r["ip"] for r in rows]
+
         queries = {
             "port": ("SELECT ip FROM ips WHERE port_status IS NULL ORDER BY seq", ()),
             "http": ("SELECT ip FROM ips WHERE port_status='open' AND http_status IS NULL ORDER BY seq", ()),
             "tls": ("SELECT ip FROM ips WHERE port_status='open' AND tls_status IS NULL ORDER BY seq", ()),
             "ping": ("SELECT ip FROM ips WHERE cf_candidate=1 AND ping_status IS NULL ORDER BY seq", ()),
-            "tcping": ("SELECT ip FROM ips WHERE cf_candidate=1 AND tcping_status IS NULL ORDER BY seq", ()),
-            "speed": ("SELECT ip FROM ips WHERE port_status='open' AND vless_status IS NULL" + (" AND cf_candidate=1" if only_candidates else "") + " ORDER BY seq", ()),
             "route": ("SELECT ip FROM ips WHERE asn_info_status IS NULL" + (" AND cf_candidate=1" if only_candidates else "") + " ORDER BY seq", ()),
         }
         if stage not in queries:
@@ -550,6 +570,119 @@ class TaskStore:
             params = (int(limit),)
         rows = self.conn.execute(sql, params)
         return [r["ip"] for r in rows]
+
+    @db_locked
+    def stage_selection_info(self, target_stage: str) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            "SELECT target_stage,source_stage,limit_n,item_count,generated_at "
+            "FROM stage_selections WHERE target_stage=?", (target_stage,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    @db_locked
+    def stage_selection_ips(self, target_stage: str) -> list[str]:
+        rows = self.conn.execute(
+            "SELECT ip FROM stage_candidates WHERE target_stage=? ORDER BY rank ASC",
+            (target_stage,)
+        )
+        return [r["ip"] for r in rows]
+
+    @db_locked
+    def _selection_missing_latency_count(self, target_stage: str) -> int:
+        field = "ping_ms" if target_stage == "tcping" else "tcping_ms"
+        row = self.conn.execute(
+            f"SELECT COUNT(*) AS n FROM stage_candidates sc JOIN ips i ON i.ip=sc.ip "
+            f"WHERE sc.target_stage=? AND i.{field} IS NULL", (target_stage,)
+        ).fetchone()
+        return int(row["n"] or 0)
+
+    @db_locked
+    def prepare_stage_selection(self, target_stage: str, limit_n: int, refresh: bool = False) -> dict[str, Any]:
+        """Freeze the ranked candidate cohort for TCPING or VLESS; zero means all."""
+        if target_stage not in ("tcping", "speed"):
+            raise ValueError("只支持为 TCPING 或 VLESS 阶段生成候选队列")
+        try:
+            limit_n = int(limit_n)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("候选前 N 必须是大于或等于 0 的整数；0 表示全部") from exc
+        if limit_n < 0 or limit_n > 100000:
+            raise ValueError("候选前 N 的范围为 0–100000；0 表示全部")
+
+        existing = self.stage_selection_info(target_stage)
+        if existing and not refresh:
+            self._write_stage_selection_file(target_stage)
+            return {**existing, "missing_latency_count": self._selection_missing_latency_count(target_stage), "reused": True}
+
+        source_stage = "ping" if target_stage == "tcping" else "tcping"
+        if self.stage_status(source_stage) != "completed":
+            label = "PING" if source_stage == "ping" else "TCPING"
+            raise ValueError(f"请先完成 {label} 阶段，再生成 {target_stage.upper()} 候选队列。")
+
+        if target_stage == "tcping":
+            rows = list(self.conn.execute(
+                "SELECT ip,ping_ms AS metric,ping_loss_pct AS quality,seq "
+                "FROM ips WHERE cf_candidate=1 ORDER BY seq ASC"
+            ))
+            rows.sort(key=lambda r: (
+                r["metric"] is None,
+                float(r["metric"]) if r["metric"] is not None else float("inf"),
+                float(r["quality"]) if r["quality"] is not None else float("inf"),
+                int(r["seq"])
+            ))
+            snapshot_name = "05_ping_selected.txt"
+        else:
+            rows = list(self.conn.execute(
+                "SELECT ip,tcping_ms AS metric,tcping_success_pct AS quality,"
+                "tcping_max_ms AS max_metric,seq FROM ips "
+                "WHERE cf_candidate=1 ORDER BY seq ASC"
+            ))
+            rows.sort(key=lambda r: (
+                r["metric"] is None,
+                float(r["metric"]) if r["metric"] is not None else float("inf"),
+                -float(r["quality"]) if r["quality"] is not None else float("inf"),
+                float(r["max_metric"]) if r["max_metric"] is not None else float("inf"),
+                int(r["seq"])
+            ))
+            snapshot_name = "06_tcping_selected.txt"
+
+        selected_rows = rows if limit_n == 0 else rows[:limit_n]
+        generated_at = utc_now()
+        with self.conn:
+            self.conn.execute("DELETE FROM stage_candidates WHERE target_stage=?", (target_stage,))
+            self.conn.execute(
+                "INSERT OR REPLACE INTO stage_selections(target_stage,source_stage,limit_n,item_count,generated_at) "
+                "VALUES(?,?,?,?,?)",
+                (target_stage, source_stage, limit_n, len(selected_rows), generated_at)
+            )
+            self.conn.executemany(
+                "INSERT INTO stage_candidates(target_stage,ip,rank) VALUES(?,?,?)",
+                [(target_stage, row["ip"], rank) for rank, row in enumerate(selected_rows, 1)]
+            )
+        atomic_write(
+            self.stage_dir / snapshot_name,
+            f"# source={source_stage}; target={target_stage}; top_n={limit_n} (0=all); "
+            f"count={len(selected_rows)}; generated_at={generated_at}\n"
+            + "".join(row["ip"] + "\n" for row in selected_rows)
+        )
+        missing = sum(1 for row in selected_rows if row["metric"] is None)
+        return {
+            "target_stage": target_stage, "source_stage": source_stage, "limit_n": limit_n,
+            "item_count": len(selected_rows), "generated_at": generated_at,
+            "missing_latency_count": missing, "reused": False
+        }
+
+    def _write_stage_selection_file(self, target_stage: str):
+        info = self.stage_selection_info(target_stage)
+        if not info:
+            return
+        filename = "05_ping_selected.txt" if target_stage == "tcping" else "06_tcping_selected.txt"
+        ips = self.stage_selection_ips(target_stage)
+        atomic_write(
+            self.stage_dir / filename,
+            f"# source={info['source_stage']}; target={target_stage}; top_n={info['limit_n']} (0=all); "
+            f"count={info['item_count']}; generated_at={info['generated_at']}\n"
+            + "".join(ip + "\n" for ip in ips)
+        )
 
     @db_locked
     def all_rows(self) -> list[sqlite3.Row]:
@@ -778,10 +911,12 @@ class ScanRunner:
 
 class ManualStageRunner(ScanRunner):
     """Run exactly one user-selected stage; every stage is separately resumable."""
-    def __init__(self, store: TaskStore, config: dict[str, Any], emit, mode: str, stage: str):
+    def __init__(self, store: TaskStore, config: dict[str, Any], emit, mode: str, stage: str,
+                 refresh_selection: bool = False):
         super().__init__(store, config, emit)
         self.mode = mode
         self.stage_name = stage
+        self.refresh_selection = bool(refresh_selection)
 
     def run(self):
         stage = self.stage_name
@@ -825,7 +960,17 @@ class ManualStageRunner(ScanRunner):
                 worker = lambda ip: ping_probe(ip, count, ping_timeout)
                 concurrency = probe_workers
             elif stage == "tcping":
+                selection = self.store.prepare_stage_selection(
+                    "tcping", int(cfg.get("ping_top_n", 500)), refresh=self.refresh_selection
+                )
                 ips = self.store.pending_ips("tcping")
+                self.emit(
+                    "log",
+                    f"PING→TCPING 队列：{selection['item_count']:,} 个候选，"
+                    f"前 N={selection['limit_n']}（0=全部）；"
+                    f"其中 {selection['missing_latency_count']:,} 个无 PING 延迟值仍保留"
+                    + ("（沿用已保存队列）" if selection["reused"] else "（已保存新队列）")
+                )
                 count = int(cfg.get("tcping_count", 5))
                 tcp_timeout = float(cfg.get("tcping_timeout", 1.5))
                 worker = lambda ip: tcping_probe(ip, count, tcp_timeout)
@@ -838,7 +983,17 @@ class ManualStageRunner(ScanRunner):
                 if not xray_path or not Path(xray_path).is_file():
                     raise FileNotFoundError("没有找到 xray.exe，请先下载或选择 Xray-core")
                 legacy_template = legacy_tester.parse_vless_link(uri)
+                selection = self.store.prepare_stage_selection(
+                    "speed", int(cfg.get("tcping_top_n", 100)), refresh=self.refresh_selection
+                )
                 ips = self.store.pending_ips("speed", only_candidates=True)
+                self.emit(
+                    "log",
+                    f"TCPING→VLESS 队列：{selection['item_count']:,} 个候选，"
+                    f"前 N={selection['limit_n']}（0=全部）；"
+                    f"其中 {selection['missing_latency_count']:,} 个无 TCPING 延迟值仍保留"
+                    + ("（沿用已保存队列）" if selection["reused"] else "（已保存新队列）")
+                )
                 if ips:
                     valid, detail = legacy_tester.validate_xray_config(xray_path, legacy_template, ips[0])
                     if not valid:
@@ -1022,17 +1177,17 @@ class App:
     STAGES = [
         ("port", "1  扫描 443", "仅本地网段模式"),
         ("http", "2  查 CF 命中", "明文 HTTP / 443，识别 CF-400、Server、CF-RAY"),
-        ("ping", "3  PING", "ICMP 平均延迟、最小/最大值、丢包"),
-        ("tcping", "4  TCPING", "重复连接 TCP 443，计算平均/最小/最大耗时"),
-        ("speed", "5  VLESS 测速", "复用 CFIPTester 旧版完整文件测速引擎"),
+        ("ping", "3  PING", "对全部 CF 命中 IP 测 ICMP；无响应也会保留"),
+        ("tcping", "4  TCPING", "按 PING 前 N 筛选；0=全部，包含 PING 无响应 IP"),
+        ("speed", "5  VLESS 测速", "按 TCPING 前 N 筛选；0=全部，包含 TCPING 失败 IP；复用旧版引擎"),
         ("route", "6  查询 ASN", "Shodan 默认取测速最快前 N 名；本地模式查询全部命中项"),
     ]
 
     def __init__(self, root):
         self.root = root
         self.root.title(f"{APP_NAME} {APP_VERSION}")
-        self.root.geometry("1380x960")
-        self.root.minsize(1120, 780)
+        self.root.geometry("1380x990")
+        self.root.minsize(1120, 810)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.events: queue.Queue = queue.Queue()
         self.runner: ManualStageRunner | None = None
@@ -1096,7 +1251,7 @@ class App:
         self.task_status_var = tk.StringVar(value="尚未创建任务")
         ttk.Label(target_actions, textvariable=self.task_status_var, foreground="#555").pack(side="right")
 
-        settings = ttk.LabelFrame(outer, text="各阶段参数（只影响之后启动的步骤）", padding=8)
+        settings = ttk.LabelFrame(outer, text="各阶段参数（只影响之后启动的步骤；筛选前 N 填 0 表示全部）", padding=8)
         settings.pack(fill="x", pady=5)
         self.scan_workers_var = tk.StringVar(value="300")
         self.probe_workers_var = tk.StringVar(value="100")
@@ -1108,6 +1263,8 @@ class App:
         self.speed_workers_var = tk.StringVar(value="1")
         self.speed_timeout_var = tk.StringVar(value="30")
         self.asn_limit_var = tk.StringVar(value="30")
+        self.ping_top_n_var = tk.StringVar(value="500")
+        self.tcping_top_n_var = tk.StringVar(value="100")
         self.speed_url_var = tk.StringVar(value=DEFAULT_SPEED_URL)
         self.sni_var = tk.StringVar(value="")
         self.xray_var = tk.StringVar(value="")
@@ -1117,17 +1274,18 @@ class App:
             ("TCPING 次数", self.tcping_count_var, 5), ("TCPING 超时 s", self.tcping_timeout_var, 5),
             ("测速并发", self.speed_workers_var, 5), ("测速超时 s", self.speed_timeout_var, 6),
             ("Shodan ASN 前 N", self.asn_limit_var, 6),
+            ("PING 前 N→TCPING", self.ping_top_n_var, 7), ("TCPING 前 N→测速", self.tcping_top_n_var, 7),
         ]
         for i, (label, var, width) in enumerate(entries):
             row, col = divmod(i, 5)
             ttk.Label(settings, text=label).grid(row=row, column=col*2, sticky="w", padx=(5, 2), pady=3)
             ttk.Entry(settings, textvariable=var, width=width).grid(row=row, column=col*2+1, sticky="w", padx=(0, 8), pady=3)
-        ttk.Label(settings, text="测速 URL").grid(row=2, column=0, sticky="w", padx=(5, 2), pady=(7, 2))
-        ttk.Entry(settings, textvariable=self.speed_url_var).grid(row=2, column=1, columnspan=7, sticky="ew", pady=(7, 2))
-        ttk.Label(settings, text="Xray-core").grid(row=2, column=8, sticky="e", padx=(8, 2), pady=(7, 2))
-        ttk.Entry(settings, textvariable=self.xray_var).grid(row=2, column=9, columnspan=3, sticky="ew", pady=(7, 2))
-        ttk.Button(settings, text="选择", command=self._browse_xray).grid(row=2, column=12, padx=3, pady=(7, 2))
-        ttk.Button(settings, text="下载 Xray", command=self._download_xray).grid(row=2, column=13, padx=3, pady=(7, 2))
+        ttk.Label(settings, text="测速 URL").grid(row=3, column=0, sticky="w", padx=(5, 2), pady=(7, 2))
+        ttk.Entry(settings, textvariable=self.speed_url_var).grid(row=3, column=1, columnspan=7, sticky="ew", pady=(7, 2))
+        ttk.Label(settings, text="Xray-core").grid(row=3, column=8, sticky="e", padx=(8, 2), pady=(7, 2))
+        ttk.Entry(settings, textvariable=self.xray_var).grid(row=3, column=9, columnspan=3, sticky="ew", pady=(7, 2))
+        ttk.Button(settings, text="选择", command=self._browse_xray).grid(row=3, column=12, padx=3, pady=(7, 2))
+        ttk.Button(settings, text="下载 Xray", command=self._download_xray).grid(row=3, column=13, padx=3, pady=(7, 2))
         for c in range(14):
             if c in (1, 3, 5, 7, 9, 11):
                 settings.columnconfigure(c, weight=1)
@@ -1257,8 +1415,10 @@ class App:
             speed_workers = max(1, min(8, int(self.speed_workers_var.get())))
             speed_timeout = max(5, min(300, int(self.speed_timeout_var.get())))
             asn_limit = max(1, min(1000, int(self.asn_limit_var.get())))
+            ping_top_n = max(0, min(100000, int(self.ping_top_n_var.get())))
+            tcping_top_n = max(0, min(100000, int(self.tcping_top_n_var.get())))
         except ValueError as exc:
-            raise ValueError("并发、次数和超时必须填写有效数字") from exc
+            raise ValueError("并发、次数、超时和候选前 N 必须填写有效数字；候选前 N 可填 0 表示全部") from exc
         vless_uri = self.vless_text.get("1.0", "end").strip()
         if vless_uri:
             parse_vless(vless_uri)
@@ -1271,6 +1431,7 @@ class App:
                 "ping_count": ping_count, "ping_timeout": ping_timeout,
                 "tcping_count": tcping_count, "tcping_timeout": tcping_timeout,
                 "speed_workers": speed_workers, "speed_timeout": speed_timeout, "asn_limit": asn_limit,
+                "ping_top_n": ping_top_n, "tcping_top_n": tcping_top_n,
                 "speed_url": url, "vless_uri": vless_uri, "sni": self.sni_var.get().strip(),
                 "xray_path": self.xray_var.get().strip(), "only_cf_candidates": True,
                 "target_text": self.targets_text.get("1.0", "end").strip(), "mode": self.mode_var.get()}
@@ -1376,6 +1537,8 @@ class App:
         self.speed_workers_var.set(str(cfg.get("speed_workers", 1)))
         self.speed_timeout_var.set(str(cfg.get("speed_timeout", 30)))
         self.asn_limit_var.set(str(cfg.get("asn_limit", 30)))
+        self.ping_top_n_var.set(str(cfg.get("ping_top_n", 500)))
+        self.tcping_top_n_var.set(str(cfg.get("tcping_top_n", 100)))
         self.sni_var.set(cfg.get("sni", ""))
         self.xray_var.set(cfg.get("xray_path", find_xray()) or find_xray())
         self.mode_var.set(cfg.get("mode", "local"))
@@ -1408,6 +1571,21 @@ class App:
         warning = self._prerequisite_message(stage)
         if warning and not messagebox.askyesno("步骤顺序提醒", warning):
             return
+        refresh_selection = False
+        if stage in ("tcping", "speed"):
+            previous_selection = self.store.stage_selection_info(stage)
+            if previous_selection and self.store.stage_status(stage) == "completed":
+                source_label = "PING" if stage == "tcping" else "TCPING"
+                target_label = "TCPING" if stage == "tcping" else "VLESS 测速"
+                configured_n = self.ping_top_n_var.get() if stage == "tcping" else self.tcping_top_n_var.get()
+                if not messagebox.askyesno(
+                    "重新生成候选队列",
+                    f"上一次 {target_label} 队列已执行完成。\n"
+                    f"是否按当前 {source_label} 前 N={configured_n} 重新筛选？\n\n"
+                    "已有检测结果会保留；新队列只会继续处理尚未完成的 IP。"
+                ):
+                    return
+                refresh_selection = True
         try:
             cfg = self._config_from_ui()
             cfg["target_text"] = self.last_config.get("target_text", "")
@@ -1417,15 +1595,15 @@ class App:
         except Exception as exc:
             messagebox.showerror("参数检查", str(exc))
             return
-        self._start_stage(stage)
+        self._start_stage(stage, refresh_selection=refresh_selection)
 
-    def _start_stage(self, stage):
+    def _start_stage(self, stage, refresh_selection=False):
         if not self.store:
             return
         self.current_stage = stage
         self.store.set_meta("active_stage", stage)
         self.runner = ManualStageRunner(self.store, self.last_config, lambda kind, data: self.events.put((kind, data)),
-                                        self.last_config.get("mode", "local"), stage)
+                                        self.last_config.get("mode", "local"), stage, refresh_selection=refresh_selection)
         def run_with_power_guard():
             set_windows_awake(True)
             try:

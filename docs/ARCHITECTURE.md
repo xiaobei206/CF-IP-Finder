@@ -1,4 +1,4 @@
-# Architecture — CF IP Finder 0.1.2
+# Architecture — CF IP Finder 0.1.3
 
 ## 1. Runtime overview
 
@@ -50,8 +50,17 @@ Do not move this code into the GUI module or add a parallel implementation witho
 - `http`: send plain HTTP request to port 443; store response status, headers, body excerpt and CF indicators. TLS probe may be attached as diagnostic to hits.
 - `ping`: system ICMP ping. Failure is a result, not a candidate deletion.
 - `tcping`: repeat TCP connect to 443. Failure is diagnostic only.
-- `speed`: run legacy Xray/SOCKS5 complete download test for CF candidates.
+- `speed`: build/restore the frozen TCPING Top-N cohort and run the legacy Xray/SOCKS5 complete download test for that cohort.
 - `route`: RIPEstat network-info / prefix-overview lookup.
+
+### Candidate funnel (both modes)
+
+- PING runs for all CF hits; no ICMP reply is diagnostic only.
+- ping_top_n defaults to 500. A positive value selects the lowest PING average latency; zero selects every CF hit, including no-reply IPs.
+- TCPING runs only the stored PING cohort. tcping_top_n defaults to 100. A positive value selects the lowest TCP connect average latency; zero selects every TCPING cohort member, including failed/no-latency IPs.
+- Ties use PING loss or TCPING success percentage and maximum latency as secondary ranking signals. Missing latency sorts last.
+- Selection is persisted in SQLite and the two *_selected.txt snapshots. Resume reuses it; re-filtering requires a user-confirmed rerun after the stage is complete. UI column sorting never changes the selection.
+- VLESS still uses the legacy full-download tester; only its own download result determines final speed ranking.
 
 ### Shodan mode
 
@@ -74,6 +83,8 @@ The `ips` table stores one row per unique IPv4, an input sequence, source line, 
 Other tables:
 
 - `stages`: stage status and item count/time metadata.
+- `stage_selections`: one durable selection definition per downstream stage, including source stage, configured N, count, and creation time.
+- `stage_candidates`: immutable rank/IP rows for the selected TCPING or VLESS cohort.
 - `logs`: task event/error history.
 - `meta`: task mode, configuration and resume metadata.
 
@@ -96,7 +107,9 @@ Common contents:
     03_cf_probe.jsonl
     04_tls_probe.jsonl
     05_ping.jsonl
+    05_ping_selected.txt
     06_tcping.jsonl
+    06_tcping_selected.txt
     07_vless_speed.jsonl
     08_network_info.jsonl
 ```

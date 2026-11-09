@@ -10,7 +10,7 @@ py -3 cf_ip_finder.py --self-test
 py -3 -m unittest discover -s tests -v
 ```
 
-The built-in self-test is offline and exercises core parsing, persistence, candidate pipeline, sorting selection, exports, VLESS URI replacement and manual-stage runner wiring. Unit tests add smaller direct checks. These do not prove real public IP availability or user's ISP performance.
+The built-in self-test is offline and exercises core parsing, persistence, candidate pipeline, sorting selection, exports, VLESS URI replacement and manual-stage runner wiring. Unit tests add smaller direct checks, including positive Top-N ranking, zero-means-all behavior for unresponsive/failed candidates, snapshot immutability, downstream queue isolation, and SQLite reopen recovery. These do not prove real public IP availability or user's ISP performance.
 
 ## GitHub Actions
 

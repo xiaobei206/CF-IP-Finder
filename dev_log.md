@@ -29,3 +29,12 @@
 
 - 将 0.1.2 完整源码与交接文档导入 `xiaobei206/CF-IP-Finder`。
 - 初始化 GitHub Actions：Linux/Windows 离线自检，Windows PyInstaller 构建与 tag/release 流程。
+
+
+## 2026-11-10 — v0.1.3 两级候选漏斗
+- 在 Local CIDR 与 Shodan Import 共同加入 PING→TCPING→VLESS 三级漏斗。
+- PING 前 N 默认 500、TCPING 前 N 默认 100；两个字段的 0 均代表全部，包含对应阶段没有延迟/失败的 IP。
+- 候选排序仅用各自源阶段的统计指标：PING 平均延迟升序；TCPING 平均 connect 延迟升序，成功率与最大延迟只用作并列参考；不把前两阶段数值混入 VLESS 下载排名。
+- 新增 stage_selections / stage_candidates 表和 05_ping_selected.txt / 06_tcping_selected.txt。数据库是权威快照；暂停/恢复始终沿用已保存的候选集合。完成后再次点击阶段并确认才重算队列。
+- 没有修改 cf_ip_tester_legacy.py；VLESS 实测仍由历史 CFIPTester 完整文件下载引擎完成。
+- 新增 8 项漏斗单元测试；等待 GitHub Actions 对 Windows/Ubuntu 执行编译、自检、单元测试并打包 Windows EXE。
