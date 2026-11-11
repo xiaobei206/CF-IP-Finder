@@ -1,5 +1,13 @@
 # 更新日志
 
+## 0.1.7 — 2026-11-11
+
+### 启动与界面修正
+- 修复启动崩溃：阶段区域之前在同一个 LabelFrame 中混用 pack 与 grid，导致 Tkinter 抛出 cannot use geometry manager grid ... already has slaves managed by pack。现在把一键按钮和阶段网格分别放入子容器，布局管理器按父容器隔离。
+- Windows CI 增加真实 Tk 根窗口初始化冒烟测试，覆盖 App 构造和界面布局。
+- 明确 Windows 发布产物为 PyInstaller one-file 便携 EXE，双击直接启动；不是安装程序或 Setup 向导。
+- 保留 v0.1.6 功能与旧版 VLESS 完整下载引擎，不改变测速逻辑。
+
 ## 0.1.6 — 2026-11-11
 
 ### 一键流程

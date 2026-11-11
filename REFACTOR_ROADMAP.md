@@ -1,5 +1,12 @@
 # Refactor Roadmap — CF IP Finder
 
+## 修复中 — 0.1.7 Tkinter 启动布局
+
+- [x] 阶段 LabelFrame 的直接子控件统一使用 pack；网格容器独立管理阶段卡片的 grid 布局。
+- [x] 增加 Windows-only Tk 窗口初始化冒烟测试。
+- [x] 保持 PyInstaller onefile 便携 EXE，不发布安装程序。
+
+
 ## 已实现 — 0.1.6 一键挑选与候选剔除
 
 - [x] 本地 / Shodan 两种一键流程，严格限定当前任务目标；ASN/BGP 不自动执行。

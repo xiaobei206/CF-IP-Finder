@@ -79,3 +79,11 @@
 - Source ZIP SHA256：55062f8e3f62f10d4ef223b98feb2bb5426b8fba419695dae44758b39074cce6。
 - legacy VLESS 引擎文件 SHA 与 v0.1.5 完全相同；未修改旧测速实现。
 - 仍需用户在 Windows 实机上用真实 VLESS 模板、Xray 和当前网络进行最终连通性/速度验证。
+
+
+## 2026-11-11 — v0.1.7 Tkinter 启动修复
+
+- 用户实机反馈 v0.1.6 启动时报 Tkinter geometry manager 冲突：同一 stages LabelFrame 先 pack 一键按钮，再 grid 阶段 cell。
+- 将 stages 内部布局拆成 auto_row 与 stage_grid 两个子容器，分别使用 pack / grid，避免一个父容器混用布局管理器。
+- 增加 Windows Tk 窗口初始化冒烟测试。
+- 明确发布文件由 PyInstaller --onefile --windowed 构建，为单文件便携应用，不是安装器。

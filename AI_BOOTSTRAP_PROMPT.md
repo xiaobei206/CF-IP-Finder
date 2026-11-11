@@ -14,7 +14,11 @@
 4. 阅读 `cf_ip_finder.py` 和 `cf_ip_tester_legacy.py` 中与你要修改的部分，确认实际代码行为。
 5. 先给用户一份简短的接手摘要：当前版本、代码/工作流状态、未完成事项、下一步建议。若用户已明确要求开发，完成检查后直接开工，不要重复问已经有答案的问题。
 
-## 当前版本能力（0.1.6）
+## 当前版本能力（0.1.7）
+
+v0.1.7 修复 Tkinter 启动布局冲突：一键按钮和阶段网格使用独立子容器，避免同一个 LabelFrame 混合 pack/grid。Windows 发布仍为 PyInstaller one-file 便携 EXE，双击直接启动，不是安装程序。
+
+## 上一版本能力（0.1.6）
 
 一键流程只处理当前任务目标：Local 为 TCP 443 → CF → PING → TCPING → VLESS；Shodan 为 CF → PING → TCPING → VLESS。ASN/BGP 仍由用户手动触发。可选过滤规则只决定后续候选资格，原始 IP 与测量结果保留在 SQLite；支持手动保留/恢复自动筛选/手动排除。结果按 IP 原位更新，不自动排序。瞬态重试历史写入 SQLite。旧版 VLESS 引擎不得擅自改写。
 

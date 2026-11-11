@@ -1,8 +1,8 @@
 # Session Handoff — CF IP Finder
 
-**当前仓库版本：0.1.6（已正式发布）**  
+**当前仓库版本：0.1.7（发布验证中/以 GitHub Release 状态为准）**  
 **当前主分支：`main`**  
-**当前开发基线：v0.1.6 已发布；后续从 v0.1.6 开始**
+**当前开发基线：v0.1.7 Tkinter 启动布局修复**
 
 ## 1. 当前实现摘要
 
@@ -120,3 +120,10 @@ Self-test passed: CIDR/Shodan import, stage checkpoints, Ping/TCPing schema, ASN
 - Source ZIP SHA256: 55062f8e3f62f10d4ef223b98feb2bb5426b8fba419695dae44758b39074cce6。
 - cf_ip_tester_legacy.py blob SHA 保持 cccb85c79f679942d3b3beeb86434ea051fa7d65。
 - CI 验证不等于用户网络环境的真实 CF/VLESS 节点实测；这部分仍需在用户 Windows 机器上测试。
+
+
+## v0.1.7 修复说明
+
+- 修复 Tkinter 启动异常：stages LabelFrame 的直接子控件不再混用 pack/grid，阶段网格移入独立 stage_grid 子容器。
+- 发布仍为 PyInstaller one-file portable EXE，双击运行，不是安装程序。
+- Windows Actions 增加 Tk 根窗口和 App 初始化冒烟测试。

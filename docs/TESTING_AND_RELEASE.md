@@ -10,7 +10,7 @@ py -3 cf_ip_finder.py --self-test
 py -3 -m unittest discover -s tests -v
 ```
 
-The built-in self-test is offline and exercises core parsing, persistence, candidate pipeline, sorting selection, exports, VLESS URI replacement and manual-stage runner wiring. The v0.1.5 tests cover exact selected-IP PING/TCPING/ASN/VLESS diagnostics and funnel immutability. The v0.1.6 test_v016_pipeline.py tests optional candidate filters, manual overrides, transient-vs-deterministic retry policy, persisted retry attempts, SQLite migration/reopen, and Local/Shodan one-click stage order. These offline tests do not prove real public IP availability or the user's ISP performance.
+On Windows, tests/test_ui_smoke.py additionally creates a hidden Tk root and initializes App, exercising the complete widget layout at startup. This is skipped on headless non-Windows runners. The built-in self-test is offline and exercises core parsing, persistence, candidate pipeline, sorting selection, exports, VLESS URI replacement and manual-stage runner wiring. The v0.1.5 tests cover exact selected-IP PING/TCPING/ASN/VLESS diagnostics and funnel immutability. The v0.1.6 test_v016_pipeline.py tests optional candidate filters, manual overrides, transient-vs-deterministic retry policy, persisted retry attempts, SQLite migration/reopen, and Local/Shodan one-click stage order. These offline tests do not prove real public IP availability or the user's ISP performance.
 
 ## GitHub Actions
 

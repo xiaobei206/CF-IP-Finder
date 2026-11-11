@@ -34,7 +34,7 @@ from typing import Any, Iterable
 import cf_ip_tester_legacy as legacy_tester
 
 APP_NAME = "CF IP Finder"
-APP_VERSION = "0.1.6"
+APP_VERSION = "0.1.7"
 DEFAULT_SPEED_URL = "http://speedtest.tyo11.jp.leaseweb.net/10mb.bin"
 DEFAULT_FILTERS = {
     "prune_port_fail": True,
@@ -1650,14 +1650,19 @@ class App:
 
         stages = ttk.LabelFrame(outer, text="手动分阶段，或由你明确点击一键挑选", padding=8)
         stages.pack(fill="x", pady=5)
-        self.auto_btn = ttk.Button(stages, text="一键挑选 IP（CF → PING → TCPING → VLESS；不查 ASN）",
+        auto_row = ttk.Frame(stages)
+        auto_row.pack(fill="x", pady=(0, 2))
+        self.auto_btn = ttk.Button(auto_row, text="一键挑选 IP（CF → PING → TCPING → VLESS；不查 ASN）",
                                    command=self.run_one_click)
-        self.auto_btn.pack(anchor="w", padx=4, pady=(0, 5))
+        self.auto_btn.pack(anchor="w", padx=4, pady=(0, 3))
+        # Keep pack/grid isolated by container: stages uses pack only, stage_grid uses grid only.
+        stage_grid = ttk.Frame(stages)
+        stage_grid.pack(fill="x")
         self.stage_buttons: dict[str, ttk.Button] = {}
         self.stage_status_vars: dict[str, tk.StringVar] = {}
         for index, (stage, label, desc) in enumerate(self.STAGES):
             row, col = divmod(index, 3)
-            cell = ttk.Frame(stages, padding=5, relief="groove")
+            cell = ttk.Frame(stage_grid, padding=5, relief="groove")
             cell.grid(row=row, column=col, sticky="nsew", padx=4, pady=4)
             ttk.Label(cell, text=label, font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
             ttk.Label(cell, text=desc, foreground="#666", wraplength=350).pack(anchor="w", pady=(2, 5))
@@ -1667,7 +1672,7 @@ class App:
             status = tk.StringVar(value="等待")
             self.stage_status_vars[stage] = status
             ttk.Label(cell, textvariable=status, foreground="#555").pack(side="left", padx=8)
-            stages.columnconfigure(col, weight=1)
+            stage_grid.columnconfigure(col, weight=1)
 
         controls = ttk.Frame(outer)
         controls.pack(fill="x", pady=(2, 4))
