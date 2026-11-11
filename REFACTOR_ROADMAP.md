@@ -1,6 +1,6 @@
 # Refactor Roadmap — CF IP Finder
 
-## 修复中 — 0.1.7 Tkinter 启动布局
+## 已发布 — 0.1.7 Tkinter 启动布局修复
 
 - [x] 阶段 LabelFrame 的直接子控件统一使用 pack；网格容器独立管理阶段卡片的 grid 布局。
 - [x] 增加 Windows-only Tk 窗口初始化冒烟测试。
@@ -77,3 +77,8 @@
 - 不以 Ping 不通、CF 特征分数低或 TCPing 较慢直接抹掉用户原始导入记录。
 - 不重写 `cf_ip_tester_legacy.py` 的成熟下载测速实现，除非有可复现缺陷与回归测试。
 - 不增加收费 API 作为必需依赖；Shodan 模式以用户导入数据为主。
+
+
+- [x] Release workflow run 43011553332 全部成功；Windows App/Tk 启动冒烟测试明确通过。
+- [x] 发布单文件便携 EXE、源码 ZIP 和 SHA256SUMS：https://github.com/xiaobei206/CF-IP-Finder/releases/tag/v0.1.7。
+- [ ] 用户 Windows 实机确认 v0.1.7 双击启动与一键挑选流程。

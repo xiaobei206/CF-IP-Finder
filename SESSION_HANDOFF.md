@@ -1,6 +1,6 @@
 # Session Handoff — CF IP Finder
 
-**当前仓库版本：0.1.7（发布验证中/以 GitHub Release 状态为准）**  
+**当前仓库版本：0.1.7（已正式发布）**  
 **当前主分支：`main`**  
 **当前开发基线：v0.1.7 Tkinter 启动布局修复**
 
@@ -127,3 +127,15 @@ Self-test passed: CIDR/Shodan import, stage checkpoints, Ping/TCPing schema, ASN
 - 修复 Tkinter 启动异常：stages LabelFrame 的直接子控件不再混用 pack/grid，阶段网格移入独立 stage_grid 子容器。
 - 发布仍为 PyInstaller one-file portable EXE，双击运行，不是安装程序。
 - Windows Actions 增加 Tk 根窗口和 App 初始化冒烟测试。
+
+
+### v0.1.7 发布结果
+
+- Release: https://github.com/xiaobei206/CF-IP-Finder/releases/tag/v0.1.7
+- Actions run 43011553332 成功；Ubuntu/Windows 验证、Windows PyInstaller one-file 构建和 Release 上传全部成功。
+- Windows UI smoke test 实际执行并通过：test_main_window_constructs_without_geometry_manager_error。
+- Release commit/tag: f7f387f6eab076c0f6ac539db3b5bd27a54b4f60。
+- Windows EXE SHA256: 90b65531686e6d9a9f519fcbf7360deb569f05846ceb706c01908e278ef8838b。
+- Source ZIP SHA256: 29886e33cc030e1f302f794beb7b8d987c5d66b06bebf9bf5b1b01cfd3b69a89。
+- cf_ip_tester_legacy.py 保持原 SHA: cccb85c79f679942d3b3beeb86434ea051fa7d65。
+- 发布文件为 PyInstaller --onefile --windowed 单文件便携 EXE，不是安装器。

@@ -87,3 +87,13 @@
 - 将 stages 内部布局拆成 auto_row 与 stage_grid 两个子容器，分别使用 pack / grid，避免一个父容器混用布局管理器。
 - 增加 Windows Tk 窗口初始化冒烟测试。
 - 明确发布文件由 PyInstaller --onefile --windowed 构建，为单文件便携应用，不是安装器。
+
+
+## 2026-11-11 — v0.1.7 发布验证完成
+
+- Actions run 43011553332：Ubuntu 与 Windows 离线验证通过；Windows TkStartupSmokeTests 实际启动 App 并通过；PyInstaller --onefile 构建、源码 ZIP、SHA256SUMS 和 Release 发布成功。
+- Release：https://github.com/xiaobei206/CF-IP-Finder/releases/tag/v0.1.7。
+- Windows EXE SHA256：90b65531686e6d9a9f519fcbf7360deb569f05846ceb706c01908e278ef8838b。
+- Source ZIP SHA256：29886e33cc030e1f302f794beb7b8d987c5d66b06bebf9bf5b1b01cfd3b69a89。
+- Windows EXE 为单文件便携应用，不包含安装向导或安装流程。
+- cf_ip_tester_legacy.py 未修改，blob SHA 保持 cccb85c79f679942d3b3beeb86434ea051fa7d65。
