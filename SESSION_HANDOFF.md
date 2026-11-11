@@ -1,8 +1,8 @@
 # Session Handoff — CF IP Finder
 
-**当前仓库版本：0.1.6（以 GitHub 实际 Release 状态为准）**  
+**当前仓库版本：0.1.6（已正式发布）**  
 **当前主分支：`main`**  
-**当前开发基线：一键挑选、候选自动剔除与手动覆盖**
+**当前开发基线：v0.1.6 已发布；后续从 v0.1.6 开始**
 
 ## 1. 当前实现摘要
 
@@ -109,3 +109,14 @@ Self-test passed: CIDR/Shodan import, stage checkpoints, Ping/TCPing schema, ASN
 - 表格刷新/排序后按 IP 恢复可见选择；支持复制和导出所选 IP。
 - VLESS 手动测试复用旧版 legacy tester；未改动 cf_ip_tester_legacy.py。
 - 新增离线回归测试。请继续核实本轮 Release Action 的 Windows 构建、Release tag 与 EXE/Source ZIP/SHA256SUMS 资产；真实网络和用户 VLESS 链路仍需 Windows 实机测试。
+
+
+## 6. v0.1.6 发布验证
+
+- Release: https://github.com/xiaobei206/CF-IP-Finder/releases/tag/v0.1.6
+- Release workflow run: 43008149682；Ubuntu / Windows 离线验证、Windows EXE 构建、源码 ZIP、SHA256SUMS 和 GitHub Release 均成功。
+- Release tag v0.1.6 指向 commit 25af7cbd2796cd5edbb2a2222038d2a79d8739af；main HEAD 同一提交。
+- Windows EXE SHA256: 6de1a1ad63988cd5db8ca050d4c4feeb449d161a9bc004531694bded8a947456。
+- Source ZIP SHA256: 55062f8e3f62f10d4ef223b98feb2bb5426b8fba419695dae44758b39074cce6。
+- cf_ip_tester_legacy.py blob SHA 保持 cccb85c79f679942d3b3beeb86434ea051fa7d65。
+- CI 验证不等于用户网络环境的真实 CF/VLESS 节点实测；这部分仍需在用户 Windows 机器上测试。

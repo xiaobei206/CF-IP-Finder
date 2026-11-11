@@ -8,6 +8,9 @@
 - [x] 瞬态失败自动重试和 SQLite 尝试历史；VLESS 参数元数据加入 CSV。
 - [x] 一键任务中断后可恢复整条流程；结果按 IP 原位更新，不自动排序。
 - [x] cf_ip_tester_legacy.py 保持原样；新增一键流程和过滤回归测试。
+- [x] Release workflow run 43008149682：Ubuntu/Windows 验证、Windows EXE、源码 ZIP、SHA256SUMS 与 GitHub Release 均成功。
+- [ ] 用户 Windows 10/11 实机运行 v0.1.6，检查一键挑选、暂停/恢复、手动覆盖过滤和 CSV 元数据。
+- [ ] 使用用户真实 VLESS 模板和测速 URL 验证真实节点连通性与速度；CI 不覆盖用户 ISP 可达性。
 
 
 ## 已实现 — 0.1.5 选中 IP 手动诊断

@@ -69,3 +69,13 @@
 - 结果表按稳定 IP 行原位更新；不因阶段进度自动排序。
 - 增加自动流程暂停/停止后的整条流程恢复逻辑。
 - 保持 legacy VLESS 下载引擎文件不变。
+
+
+## 2026-11-11 — v0.1.6 发布结果
+
+- Release workflow run 43008149682 成功：Ubuntu 与 Windows 离线验证通过，Windows PyInstaller one-file 构建通过，源码 ZIP、SHA256SUMS 和 GitHub Release 发布通过。
+- 正式 Release：https://github.com/xiaobei206/CF-IP-Finder/releases/tag/v0.1.6。
+- Windows EXE SHA256：6de1a1ad63988cd5db8ca050d4c4feeb449d161a9bc004531694bded8a947456。
+- Source ZIP SHA256：55062f8e3f62f10d4ef223b98feb2bb5426b8fba419695dae44758b39074cce6。
+- legacy VLESS 引擎文件 SHA 与 v0.1.5 完全相同；未修改旧测速实现。
+- 仍需用户在 Windows 实机上用真实 VLESS 模板、Xray 和当前网络进行最终连通性/速度验证。
