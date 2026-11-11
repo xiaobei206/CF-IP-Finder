@@ -668,10 +668,13 @@ class TaskStore:
             sql += " ORDER BY seq"
             if limit is not None and limit > 0:
                 # Shodan ASN selection remains limited to successful VLESS nodes by real speed.
-                sql = ("SELECT * FROM ips WHERE asn_info_status IS NULL AND cf_candidate=1 "
-                       "AND vless_status='success' ORDER BY speed_mbps DESC,ttfb_ms ASC,seq ASC LIMIT ?")
+                # Freeze the fastest N successful VLESS nodes first; do not backfill
+                # lower-ranked nodes merely because a faster node already has ASN data.
+                sql = ("SELECT * FROM ips WHERE cf_candidate=1 AND vless_status='success' "
+                       "ORDER BY speed_mbps DESC,ttfb_ms ASC,seq ASC LIMIT ?")
                 rows = self.conn.execute(sql, (int(limit),))
-                return [row["ip"] for row in rows if not filter_reasons(row, filters, "vless")]
+                return [row["ip"] for row in rows
+                        if row["asn_info_status"] is None and not filter_reasons(row, filters, "vless")]
             rows = self.conn.execute(sql)
         return [row["ip"] for row in rows if not filter_reasons(row, filters, through or "vless")]
 
@@ -2100,6 +2103,8 @@ class App:
             mode = self.last_config.get("mode", "local")
             order = ["http", "ping", "tcping", "speed", "route"] if mode == "shodan" else ["port", "http", "ping", "tcping", "speed", "route"]
             stage = next((x for x in order if self._stage_has_pending(x)), "")
+        if not stage and self.store.get_meta("auto_pipeline_active", "0") == "1":
+            stage = "auto"
         if not stage:
             messagebox.showinfo(APP_NAME, "没有发现未完成的步骤。可以直接点击某个步骤进行补测。")
             return
