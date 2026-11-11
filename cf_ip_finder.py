@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""CF IP Finder 0.1.5 - staged IPv4 scanner and VLESS/Xray tester.
+"""CF IP Finder 0.1.6 - staged IPv4 scanner and VLESS/Xray tester.
 Python 3.10+; standard library only. Windows GUI uses tkinter.
 """
 from __future__ import annotations
@@ -34,8 +34,52 @@ from typing import Any, Iterable
 import cf_ip_tester_legacy as legacy_tester
 
 APP_NAME = "CF IP Finder"
-APP_VERSION = "0.1.5"
+APP_VERSION = "0.1.6"
 DEFAULT_SPEED_URL = "http://speedtest.tyo11.jp.leaseweb.net/10mb.bin"
+DEFAULT_FILTERS = {
+    "prune_port_fail": True,
+    "prune_cf_miss": True,
+    "prune_ping_loss": False,
+    "prune_tcping_incomplete": False,
+    "prune_vless_fail": False,
+}
+FILTER_ORDER = ("port", "cf", "ping", "tcping", "vless")
+
+
+def normalize_filters(value: Any = None) -> dict[str, bool]:
+    result = dict(DEFAULT_FILTERS)
+    if isinstance(value, dict):
+        for key in result:
+            if key in value:
+                result[key] = bool(value[key])
+    return result
+
+
+def filter_reasons(row, filters: dict[str, bool] | None = None, through: str = "vless") -> list[str]:
+    """Return automatic/manual exclusion reasons without deleting or mutating raw data."""
+    opts = normalize_filters(filters)
+    override = (row["manual_override"] or "").strip() if "manual_override" in row.keys() else ""
+    if override == "keep":
+        return []
+    if override == "exclude":
+        return ["手动排除"]
+    end = FILTER_ORDER.index(through) if through in FILTER_ORDER else len(FILTER_ORDER) - 1
+    reasons: list[str] = []
+    if end >= 0 and opts["prune_port_fail"] and row["port_status"] is not None and row["port_status"] != "open":
+        reasons.append("443 未开放")
+    if end >= 1 and opts["prune_cf_miss"] and row["http_status"] is not None and not int(row["cf_candidate"] or 0):
+        reasons.append("CF 未命中")
+    if end >= 2 and opts["prune_ping_loss"] and row["ping_status"] is not None:
+        loss = row["ping_loss_pct"]
+        if (loss is not None and float(loss) > 0) or row["ping_status"] != "success":
+            reasons.append("PING 有丢包/无响应")
+    if end >= 3 and opts["prune_tcping_incomplete"] and row["tcping_status"] is not None:
+        pct = row["tcping_success_pct"]
+        if row["tcping_status"] != "success" or pct is None or float(pct) < 100:
+            reasons.append("TCPING 成功率不足 100%")
+    if end >= 4 and opts["prune_vless_fail"] and row["vless_status"] is not None and row["vless_status"] != "success":
+        reasons.append("VLESS 测速失败")
+    return reasons
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "CF-IP-Finder" if os.name == "nt" else Path.home() / ".cf-ip-finder"
 
 # ----------------------------- IP / VLESS parsing -----------------------------
@@ -417,6 +461,8 @@ CREATE TABLE IF NOT EXISTS ips (
  tcping_status TEXT, tcping_ms REAL, tcping_min_ms REAL, tcping_max_ms REAL, tcping_success_pct REAL, tcping_successes INTEGER, tcping_error TEXT,
  vless_status TEXT, speed_mbps REAL, peak_mbps REAL, download_bytes INTEGER, ttfb_ms REAL, speed_seconds REAL,
  speed_requests INTEGER, vless_error TEXT,
+ speed_tested_at TEXT, speed_url TEXT, speed_timeout_s REAL, speed_concurrency INTEGER, speed_attempts INTEGER DEFAULT 0,
+ manual_override TEXT,
  asn_info_status TEXT, asn TEXT, organization TEXT, bgp_prefix TEXT, route_source TEXT, route_error TEXT,
  updated_at TEXT
 );
@@ -430,6 +476,10 @@ CREATE TABLE IF NOT EXISTS stage_selections (
 CREATE TABLE IF NOT EXISTS stage_candidates (
  target_stage TEXT NOT NULL, ip TEXT NOT NULL, rank INTEGER NOT NULL,
  PRIMARY KEY(target_stage, ip), UNIQUE(target_stage, rank)
+);
+CREATE TABLE IF NOT EXISTS attempt_history (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, ip TEXT NOT NULL, stage TEXT NOT NULL,
+ attempt INTEGER NOT NULL, at TEXT NOT NULL, status TEXT NOT NULL, detail TEXT NOT NULL
 );
 """
 
@@ -465,6 +515,9 @@ class TaskStore:
             "ping_loss_pct": "REAL", "ping_replies": "INTEGER", "ping_error": "TEXT",
             "tcping_status": "TEXT", "tcping_ms": "REAL", "tcping_min_ms": "REAL", "tcping_max_ms": "REAL",
             "tcping_success_pct": "REAL", "tcping_successes": "INTEGER", "tcping_error": "TEXT",
+            "speed_tested_at": "TEXT", "speed_url": "TEXT", "speed_timeout_s": "REAL",
+            "speed_concurrency": "INTEGER", "speed_attempts": "INTEGER DEFAULT 0",
+            "manual_override": "TEXT",
         }
         existing = {r[1] for r in self.conn.execute("PRAGMA table_info(ips)")}
         for column, kind in migrations.items():
@@ -509,6 +562,51 @@ class TaskStore:
         return str(r["value"]) if r else default
 
     @db_locked
+    def set_filters(self, value: dict[str, Any] | None):
+        normalized = normalize_filters(value)
+        with self.conn:
+            self.conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('filters_json',?)",
+                              (json.dumps(normalized, ensure_ascii=False),))
+
+    @db_locked
+    def get_filters(self) -> dict[str, bool]:
+        row = self.conn.execute("SELECT value FROM meta WHERE key='filters_json'").fetchone()
+        if not row:
+            return dict(DEFAULT_FILTERS)
+        try:
+            return normalize_filters(json.loads(row["value"]))
+        except Exception:
+            return dict(DEFAULT_FILTERS)
+
+    @db_locked
+    def set_manual_override(self, ip: str, override: str):
+        if override not in ("keep", "exclude", "auto"):
+            raise ValueError("override 必须是 keep / exclude / auto")
+        with self.conn:
+            self.conn.execute("UPDATE ips SET manual_override=? WHERE ip=?",
+                              (None if override == "auto" else override, ip))
+
+    @db_locked
+    def row_for_ip(self, ip: str):
+        return self.conn.execute("SELECT * FROM ips WHERE ip=?", (ip,)).fetchone()
+
+    @db_locked
+    def record_attempt(self, ip: str, stage: str, attempt: int, status: str, detail: str):
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO attempt_history(ip,stage,attempt,at,status,detail) VALUES(?,?,?,?,?,?)",
+                (ip, stage, int(attempt), utc_now(), str(status)[:80], str(detail)[:1000])
+            )
+
+    @db_locked
+    def attempts_for(self, ip: str, stage: str) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT attempt,at,status,detail FROM attempt_history WHERE ip=? AND stage=? ORDER BY id",
+            (ip, stage)
+        )
+        return [dict(row) for row in rows]
+
+    @db_locked
     def stage_start(self, name: str):
         now = utc_now()
         with self.conn:
@@ -536,40 +634,46 @@ class TaskStore:
 
     @db_locked
     def pending_ips(self, stage: str, only_candidates: bool = True, limit: int | None = None) -> list[str]:
+        filters = self.get_filters()
+        stage_fields = {
+            "port": ("port_status", None),
+            "http": ("http_status", "port"),
+            "ping": ("ping_status", "cf"),
+            "route": ("asn_info_status", "vless"),
+        }
         if stage in ("tcping", "speed"):
             status_field = "tcping_status" if stage == "tcping" else "vless_status"
-            exists = self.conn.execute(
-                "SELECT 1 FROM stage_selections WHERE target_stage=?", (stage,)
-            ).fetchone()
-            if not exists:
-                return []
-            rows = self.conn.execute(
-                f"SELECT i.ip FROM stage_candidates sc JOIN ips i ON i.ip=sc.ip "
-                f"WHERE sc.target_stage=? AND i.{status_field} IS NULL ORDER BY sc.rank ASC",
-                (stage,)
-            )
-            return [r["ip"] for r in rows]
+            through = "ping" if stage == "tcping" else "tcping"
+            ips = self.stage_selection_ips(stage)
+            result = []
+            for ip in ips:
+                row = self.conn.execute(f"SELECT * FROM ips WHERE ip=? AND {status_field} IS NULL", (ip,)).fetchone()
+                if row is not None and not filter_reasons(row, filters, through):
+                    result.append(ip)
+            return result
 
-        queries = {
-            "port": ("SELECT ip FROM ips WHERE port_status IS NULL ORDER BY seq", ()),
-            "http": ("SELECT ip FROM ips WHERE port_status='open' AND http_status IS NULL ORDER BY seq", ()),
-            "tls": ("SELECT ip FROM ips WHERE port_status='open' AND tls_status IS NULL ORDER BY seq", ()),
-            "ping": ("SELECT ip FROM ips WHERE cf_candidate=1 AND ping_status IS NULL ORDER BY seq", ()),
-            "route": ("SELECT ip FROM ips WHERE asn_info_status IS NULL" + (" AND cf_candidate=1" if only_candidates else "") + " ORDER BY seq", ()),
-        }
-        if stage not in queries:
+        if stage not in stage_fields:
             return []
-        sql, params = queries[stage]
-        if stage == "route" and limit is not None and limit > 0:
-            # Shodan mode queries only the fastest successful VLESS candidates.
-            sql = ("SELECT ip FROM (SELECT ip,speed_mbps,ttfb_ms,seq FROM ips "
-                   "WHERE cf_candidate=1 AND vless_status='success' "
-                   "ORDER BY speed_mbps DESC, ttfb_ms ASC, seq ASC LIMIT ?) ranked "
-                   "WHERE ip IN (SELECT ip FROM ips WHERE asn_info_status IS NULL) "
-                   "ORDER BY speed_mbps DESC, ttfb_ms ASC, seq ASC")
-            params = (int(limit),)
-        rows = self.conn.execute(sql, params)
-        return [r["ip"] for r in rows]
+        status_field, through = stage_fields[stage]
+        if stage == "port":
+            rows = self.conn.execute("SELECT * FROM ips WHERE port_status IS NULL ORDER BY seq")
+        elif stage == "http":
+            rows = self.conn.execute("SELECT * FROM ips WHERE http_status IS NULL AND port_status IS NOT NULL ORDER BY seq")
+        elif stage == "ping":
+            rows = self.conn.execute("SELECT * FROM ips WHERE ping_status IS NULL AND http_status IS NOT NULL ORDER BY seq")
+        else:
+            sql = "SELECT * FROM ips WHERE asn_info_status IS NULL"
+            if only_candidates:
+                sql += " AND cf_candidate=1"
+            sql += " ORDER BY seq"
+            if limit is not None and limit > 0:
+                # Shodan ASN selection remains limited to successful VLESS nodes by real speed.
+                sql = ("SELECT * FROM ips WHERE asn_info_status IS NULL AND cf_candidate=1 "
+                       "AND vless_status='success' ORDER BY speed_mbps DESC,ttfb_ms ASC,seq ASC LIMIT ?")
+                rows = self.conn.execute(sql, (int(limit),))
+                return [row["ip"] for row in rows if not filter_reasons(row, filters, "vless")]
+            rows = self.conn.execute(sql)
+        return [row["ip"] for row in rows if not filter_reasons(row, filters, through or "vless")]
 
     @db_locked
     def stage_selection_info(self, target_stage: str) -> dict[str, Any] | None:
@@ -598,7 +702,7 @@ class TaskStore:
 
     @db_locked
     def prepare_stage_selection(self, target_stage: str, limit_n: int, refresh: bool = False) -> dict[str, Any]:
-        """Freeze the ranked candidate cohort for TCPING or VLESS; zero means all."""
+        """Freeze the ranked candidate cohort after applying the configured optional filters."""
         if target_stage not in ("tcping", "speed"):
             raise ValueError("只支持为 TCPING 或 VLESS 阶段生成候选队列")
         try:
@@ -618,42 +722,38 @@ class TaskStore:
             label = "PING" if source_stage == "ping" else "TCPING"
             raise ValueError(f"请先完成 {label} 阶段，再生成 {target_stage.upper()} 候选队列。")
 
+        filters = self.get_filters()
         if target_stage == "tcping":
             rows = list(self.conn.execute(
-                "SELECT ip,ping_ms AS metric,ping_loss_pct AS quality,seq "
-                "FROM ips WHERE cf_candidate=1 ORDER BY seq ASC"
+                "SELECT * FROM ips WHERE http_status IS NOT NULL AND ping_status IS NOT NULL ORDER BY seq ASC"
             ))
+            rows = [r for r in rows if not filter_reasons(r, filters, "ping")]
             rows.sort(key=lambda r: (
-                r["metric"] is None,
-                float(r["metric"]) if r["metric"] is not None else float("inf"),
-                float(r["quality"]) if r["quality"] is not None else float("inf"),
+                r["ping_ms"] is None,
+                float(r["ping_ms"]) if r["ping_ms"] is not None else float("inf"),
+                float(r["ping_loss_pct"]) if r["ping_loss_pct"] is not None else float("inf"),
                 int(r["seq"])
             ))
             snapshot_name = "05_ping_selected.txt"
         else:
             tcping_selection = self.stage_selection_info("tcping")
             if tcping_selection:
-                # New tasks: the VLESS cohort must be bounded by the exact TCPING cohort,
-                # including its failed/unresponsive members when the user selects 0=all.
                 rows = list(self.conn.execute(
-                    "SELECT i.ip,i.tcping_ms AS metric,i.tcping_success_pct AS quality,"
-                    "i.tcping_max_ms AS max_metric,i.seq "
-                    "FROM stage_candidates sc JOIN ips i ON i.ip=sc.ip "
+                    "SELECT i.* FROM stage_candidates sc JOIN ips i ON i.ip=sc.ip "
                     "WHERE sc.target_stage='tcping' ORDER BY sc.rank ASC"
                 ))
             else:
-                # Backward compatibility for 0.1.2 tasks, which had no saved TCPING cohort:
-                # all CF candidates with a recorded TCPING result formed that old cohort.
+                # Backward compatibility for tasks that predate durable TCPING snapshots.
                 rows = list(self.conn.execute(
-                    "SELECT ip,tcping_ms AS metric,tcping_success_pct AS quality,"
-                    "tcping_max_ms AS max_metric,seq FROM ips "
-                    "WHERE cf_candidate=1 AND tcping_status IS NOT NULL ORDER BY seq ASC"
+                    "SELECT * FROM ips WHERE http_status IS NOT NULL AND ping_status IS NOT NULL "
+                    "AND tcping_status IS NOT NULL ORDER BY seq ASC"
                 ))
+            rows = [r for r in rows if not filter_reasons(r, filters, "tcping")]
             rows.sort(key=lambda r: (
-                r["metric"] is None,
-                float(r["metric"]) if r["metric"] is not None else float("inf"),
-                -float(r["quality"]) if r["quality"] is not None else float("inf"),
-                float(r["max_metric"]) if r["max_metric"] is not None else float("inf"),
+                r["tcping_ms"] is None,
+                float(r["tcping_ms"]) if r["tcping_ms"] is not None else float("inf"),
+                -float(r["tcping_success_pct"]) if r["tcping_success_pct"] is not None else float("inf"),
+                float(r["tcping_max_ms"]) if r["tcping_max_ms"] is not None else float("inf"),
                 int(r["seq"])
             ))
             snapshot_name = "06_tcping_selected.txt"
@@ -677,7 +777,8 @@ class TaskStore:
             f"count={len(selected_rows)}; generated_at={generated_at}\n"
             + "".join(row["ip"] + "\n" for row in selected_rows)
         )
-        missing = sum(1 for row in selected_rows if row["metric"] is None)
+        metric_field = "ping_ms" if target_stage == "tcping" else "tcping_ms"
+        missing = sum(1 for row in selected_rows if row[metric_field] is None)
         return {
             "target_stage": target_stage, "source_stage": source_stage, "limit_n": limit_n,
             "item_count": len(selected_rows), "generated_at": generated_at,
@@ -783,7 +884,7 @@ class ScanRunner:
         if not ips:
             suffix = "，标记为完成（0 条）" if record_stage else ""
             self.emit("log", f"{display_name}：没有待处理记录{suffix}")
-            if record_stage:
+            if record_stage and self.store.stage_status(name) != "completed":
                 self.store.stage_finish(name, 0)
             return True
         self.emit("stage", display_name)
@@ -820,11 +921,27 @@ class ScanRunner:
                 for future in done:
                     ip = futures.pop(future)
                     try:
-                        result = future.result()
+                        initial_result = future.result()
                     except Exception as exc:
-                        errors += 1
-                        result = {self._failure_field(name): "error", self._failure_error(name): str(exc)[:240]}
+                        initial_result = {
+                            self._failure_field(name): "error",
+                            self._failure_error(name): str(exc)[:240],
+                        }
+                    result = self._run_with_retries(name, worker, ip, initial_result=initial_result)
+                    attempt_count = int(result.pop("_attempts", 1))
+                    if name == "speed":
+                        result.update({
+                            "speed_tested_at": utc_now(),
+                            "speed_url": str(self.cfg.get("speed_url", DEFAULT_SPEED_URL)),
+                            "speed_timeout_s": float(self.cfg.get("speed_timeout", 30)),
+                            "speed_concurrency": int(concurrency),
+                            "speed_attempts": attempt_count,
+                        })
                     self.store.save_result(ip, result)
+                    status_value = result.get(self._failure_field(name))
+                    if status_value in ("error", "failed"):
+                        errors += 1
+                    self.emit("result", ip)
                     completed += 1
                     if completed % 10 == 0 or completed == len(ips):
                         self.emit("progress", (display_name, completed, len(ips)))
@@ -845,6 +962,60 @@ class ScanRunner:
     @staticmethod
     def _failure_error(stage: str) -> str:
         return {"port": "port_error", "http": "http_error", "tls": "tls_error", "ping": "ping_error", "tcping": "tcping_error", "route": "route_error", "speed": "vless_error"}.get(stage, "port_error")
+
+    @staticmethod
+    def _retryable_result(stage: str, result: dict[str, Any]) -> bool:
+        status_field = ScanRunner._failure_field(stage)
+        error_field = ScanRunner._failure_error(stage)
+        status = result.get(status_field)
+        detail = str(result.get(error_field) or "").lower()
+        transient = ("timed out", "timeout", "time out", "connection reset", "reset by peer",
+                     "temporarily unavailable", "temporary failure", "network is unreachable",
+                     "host is unreachable", "connection aborted", "try again", "deadline exceeded",
+                     "i/o timeout", "tls handshake timeout", "超时", "连接重置",
+                     "网络不可达", "暂时不可用")
+        if stage == "ping":
+            # Windows ping can return timeout with an empty or localized output string.
+            return status == "timeout" or (status == "error" and any(term in detail for term in transient))
+        if stage == "port":
+            return status == "timeout" or any(term in detail for term in transient)
+        if stage == "tcping":
+            return status in ("failed", "partial") and any(term in detail for term in transient)
+        if stage == "http":
+            try:
+                http_status = int(result.get("http_status") or 0)
+            except (TypeError, ValueError):
+                http_status = 0
+            return http_status < 0 and any(term in detail for term in transient)
+        if stage == "tls":
+            return status == "failed" and any(term in detail for term in transient)
+        if stage == "speed":
+            return status == "failed" and any(term in detail for term in transient)
+        return False
+
+    def _run_with_retries(self, stage: str, worker, ip: str,
+                          initial_result: dict[str, Any] | None = None) -> dict[str, Any]:
+        retries = max(0, min(3, int(self.cfg.get("retry_count", 1))))
+        status_field = self._failure_field(stage)
+        error_field = self._failure_error(stage)
+        result: dict[str, Any] = {}
+        for attempt in range(1, retries + 2):
+            if attempt == 1 and initial_result is not None:
+                result = initial_result
+            else:
+                try:
+                    result = worker(ip)
+                except Exception as exc:
+                    result = {status_field: "error", error_field: str(exc)[:400]}
+            status = str(result.get(status_field) if result.get(status_field) is not None else "unknown")
+            detail = str(result.get(error_field) or "")
+            self.store.record_attempt(ip, stage, attempt, status, detail)
+            if attempt > retries or not self._retryable_result(stage, result) or self.stop_event.is_set():
+                result["_attempts"] = attempt
+                return result
+            self.emit("log", f"{ip} {stage.upper()} 第 {attempt} 次遇到瞬态错误，自动重试（最多 {retries} 次）")
+        result["_attempts"] = retries + 1
+        return result
 
     def run(self):
         try:
@@ -1060,6 +1231,69 @@ class ManualStageRunner(ScanRunner):
     def stage_label(stage: str) -> str:
         return {"port": "扫描 443", "http": "CF 命中检测", "ping": "PING", "tcping": "TCPING", "speed": "VLESS 实际测速", "route": "ASN / BGP 查询"}.get(stage, stage)
 
+
+
+class AutoPipelineRunner(ScanRunner):
+    """One-click orchestration over the same resumable manual-stage runners."""
+    def __init__(self, store: TaskStore, config: dict[str, Any], emit, mode: str):
+        super().__init__(store, config, emit)
+        self.mode = mode
+
+    def run(self):
+        try:
+            uri = (self.cfg.get("vless_uri") or "").strip()
+            if not uri:
+                raise ValueError("一键挑选需要先填写 VLESS 模板")
+            xray_path = (self.cfg.get("xray_path") or "").strip()
+            if not xray_path or not Path(xray_path).is_file():
+                raise FileNotFoundError("一键挑选需要有效的 Xray-core 路径")
+            stages = (["port", "http", "ping", "tcping", "speed"] if self.mode == "local"
+                      else ["http", "ping", "tcping", "speed"])
+            labels = {"port": "扫描 443", "http": "CF 命中检测", "ping": "PING",
+                      "tcping": "TCPING", "speed": "VLESS 完整文件测速"}
+            self.store.set_meta("auto_pipeline_active", "1")
+            self.emit("log", "一键挑选开始：只处理当前任务已导入/输入的 IP；ASN/BGP 保持手动。")
+            for stage in stages:
+                if self.stop_event.is_set():
+                    self.emit("done", ("auto", "stopped"))
+                    return
+                if not self.wait_active():
+                    self.emit("done", ("auto", "paused"))
+                    return
+                self.emit("stage", f"一键流程：{labels[stage]}")
+                outcome: list[Any] = []
+
+                def relay(kind, data):
+                    if kind == "done":
+                        outcome.append(data)
+                    else:
+                        self.emit(kind, data)
+
+                inner = ManualStageRunner(
+                    self.store, self.cfg, relay, self.mode, stage,
+                    refresh_selection=(stage in ("tcping", "speed"))
+                )
+                inner.stop_event = self.stop_event
+                inner.pause_event = self.pause_event
+                inner.run()
+                if not outcome:
+                    self.emit("done", ("auto", "error"))
+                    return
+                payload = outcome[-1]
+                state = payload[1] if isinstance(payload, tuple) and len(payload) > 1 else "error"
+                if state != "completed":
+                    self.emit("done", ("auto", state))
+                    return
+            self.store.set_meta("active_stage", "")
+            self.store.set_meta("auto_pipeline_active", "0")
+            self.store.set_meta("last_completed_stage", "auto")
+            self.emit("log", "一键挑选完成：CF / PING / TCPING / VLESS 阶段已按当前剔除规则处理；ASN/BGP 未自动运行。")
+            self.emit("done", ("auto", "completed"))
+        except Exception as exc:
+            self.store.add_log("ERROR", f"auto pipeline: {exc}")
+            self.emit("log", f"一键挑选失败：{exc}")
+            self.emit("done", ("auto", "error"))
+
 class ManualSelectionRunner(ScanRunner):
     """Run diagnostics against an explicit IP list without mutating global stage queues."""
     def __init__(self, store: TaskStore, config: dict[str, Any], emit, mode: str,
@@ -1200,6 +1434,7 @@ def export_results(store: TaskStore, output_dir: Path, base_name: str, vless_uri
               "ping_status", "ping_ms", "ping_min_ms", "ping_max_ms", "ping_loss_pct", "ping_replies", "ping_error",
               "tcping_status", "tcping_ms", "tcping_min_ms", "tcping_max_ms", "tcping_success_pct", "tcping_successes", "tcping_error",
               "vless_status", "download_speed_MB_s", "ttfb_ms", "download_bytes",
+              "speed_tested_at", "speed_url", "speed_timeout_s", "speed_concurrency", "speed_attempts", "manual_override",
               "asn", "organization", "bgp_prefix", "route_source", "route_error", "vless_error"]
     with csv_path.open("w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
@@ -1283,11 +1518,12 @@ class App:
     def __init__(self, root):
         self.root = root
         self.root.title(f"{APP_NAME} {APP_VERSION}")
-        self.root.geometry("1380x990")
-        self.root.minsize(1120, 810)
+        self.root.geometry("1460x1080")
+        self.root.minsize(1180, 880)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.events: queue.Queue = queue.Queue()
-        self.runner: ManualStageRunner | None = None
+        self.runner: ScanRunner | None = None
+        self.active_filters = dict(DEFAULT_FILTERS)
         self.runner_thread: threading.Thread | None = None
         self.store: TaskStore | None = None
         self.task_folder: Path | None = None
@@ -1296,6 +1532,8 @@ class App:
         self.sort_column = "speed"
         self.sort_desc = True
         self.only_hits_var = None
+        self.view_var = None
+        self.context_ips: list[str] = []
         self._build_ui()
         self.xray_var.set(find_xray())
         self._load_latest_task()
@@ -1387,8 +1625,31 @@ class App:
             if c in (1, 3, 5, 7, 9, 11):
                 settings.columnconfigure(c, weight=1)
 
-        stages = ttk.LabelFrame(outer, text="分阶段操作：每一步单独点击，完成后再决定下一步", padding=8)
+        filters_frame = ttk.LabelFrame(outer, text="自动剔除规则（只影响后续候选资格；原始 IP 和检测结果始终保留）", padding=7)
+        filters_frame.pack(fill="x", pady=(2, 5))
+        self.prune_port_var = tk.BooleanVar(value=DEFAULT_FILTERS["prune_port_fail"])
+        self.prune_cf_var = tk.BooleanVar(value=DEFAULT_FILTERS["prune_cf_miss"])
+        self.prune_ping_var = tk.BooleanVar(value=DEFAULT_FILTERS["prune_ping_loss"])
+        self.prune_tcping_var = tk.BooleanVar(value=DEFAULT_FILTERS["prune_tcping_incomplete"])
+        self.prune_vless_var = tk.BooleanVar(value=DEFAULT_FILTERS["prune_vless_fail"])
+        filter_controls = [
+            ("剔除 443 未开放", self.prune_port_var),
+            ("剔除 CF 未命中", self.prune_cf_var),
+            ("剔除 PING 丢包 > 0%", self.prune_ping_var),
+            ("剔除 TCPING 成功率 < 100%", self.prune_tcping_var),
+            ("剔除 VLESS 测速失败", self.prune_vless_var),
+        ]
+        for label, variable in filter_controls:
+            ttk.Checkbutton(filters_frame, text=label, variable=variable).pack(side="left", padx=(5, 12))
+        self.retry_count_var = tk.StringVar(value="1")
+        ttk.Label(filters_frame, text="瞬态错误重试次数").pack(side="left", padx=(12, 3))
+        ttk.Entry(filters_frame, textvariable=self.retry_count_var, width=4).pack(side="left")
+
+        stages = ttk.LabelFrame(outer, text="手动分阶段，或由你明确点击一键挑选", padding=8)
         stages.pack(fill="x", pady=5)
+        self.auto_btn = ttk.Button(stages, text="一键挑选 IP（CF → PING → TCPING → VLESS；不查 ASN）",
+                                   command=self.run_one_click)
+        self.auto_btn.pack(anchor="w", padx=4, pady=(0, 5))
         self.stage_buttons: dict[str, ttk.Button] = {}
         self.stage_status_vars: dict[str, tk.StringVar] = {}
         for index, (stage, label, desc) in enumerate(self.STAGES):
@@ -1415,6 +1676,12 @@ class App:
         ttk.Button(controls, text="导出 CF 命中 IP", command=self.export_cf_hits).pack(side="left", padx=6)
         self.only_hits_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(controls, text="仅显示 CF 命中", variable=self.only_hits_var, command=self._render_results).pack(side="left", padx=12)
+        self.view_var = tk.StringVar(value="全部")
+        ttk.Label(controls, text="结果视图").pack(side="left", padx=(8, 3))
+        view_combo = ttk.Combobox(controls, textvariable=self.view_var, values=("全部", "可用候选", "已过滤"),
+                                  width=10, state="readonly")
+        view_combo.pack(side="left")
+        view_combo.bind("<<ComboboxSelected>>", lambda _e: self._render_results())
         self.status_var = tk.StringVar(value="就绪：创建任务后，逐步点击各阶段按钮。")
         ttk.Label(controls, textvariable=self.status_var, foreground="#555").pack(side="right")
 
@@ -1429,15 +1696,15 @@ class App:
 
         result_frame = ttk.LabelFrame(outer, text="结果表：点击任意表头切换升序 / 降序；缺失值始终放在最后", padding=6)
         result_frame.pack(fill="both", expand=True, pady=4)
-        cols = ("ip", "port", "cf", "cfscore", "ping", "loss", "tcping", "tcpok", "speed", "ttfb", "asn", "server")
+        cols = ("ip", "port", "cf", "cfscore", "ping", "loss", "tcping", "tcpok", "speed", "ttfb", "asn", "server", "filter")
         self.column_fields = {"ip": ("ip", False), "port": ("port_ms", True), "cf": ("cf_candidate", True),
                               "cfscore": ("cf_score", True), "ping": ("ping_ms", True), "loss": ("ping_loss_pct", True), "tcping": ("tcping_ms", True),
                               "tcpok": ("tcping_success_pct", True), "speed": ("speed_mbps", True), "ttfb": ("ttfb_ms", True),
-                              "asn": ("asn", False), "server": ("http_server", False)}
+                              "asn": ("asn", False), "server": ("http_server", False), "filter": ("manual_override", False)}
         self.column_labels = {"ip": "IP", "port": "443 ms", "cf": "CF 命中", "cfscore": "CF 分", "ping": "PING ms", "loss": "丢包率 %",
-                              "tcping": "TCPING ms", "tcpok": "TCP 成功率 %", "speed": "VLESS MB/s", "ttfb": "TTFB ms", "asn": "ASN / 组织", "server": "Server / CF-RAY"}
+                              "tcping": "TCPING ms", "tcpok": "TCP 成功率 %", "speed": "VLESS MB/s", "ttfb": "TTFB ms", "asn": "ASN / 组织", "server": "Server / CF-RAY", "filter": "筛选状态"}
         self.tree = ttk.Treeview(result_frame, columns=cols, show="headings", height=13, selectmode="extended")
-        widths = {"ip": 125, "port": 75, "cf": 75, "cfscore": 65, "ping": 80, "loss": 75, "tcping": 90, "tcpok": 90, "speed": 100, "ttfb": 75, "asn": 190, "server": 220}
+        widths = {"ip": 125, "port": 75, "cf": 75, "cfscore": 65, "ping": 80, "loss": 75, "tcping": 90, "tcpok": 90, "speed": 100, "ttfb": 75, "asn": 190, "server": 220, "filter": 165}
         for c in cols:
             self._update_heading(c)
             self.tree.column(c, width=widths[c], anchor="w" if c in ("ip", "asn", "server") else "center")
@@ -1456,6 +1723,10 @@ class App:
         self.result_context_menu.add_command(label="手动测试 TCPING", command=lambda: self.run_selected_stage("tcping"))
         self.result_context_menu.add_command(label="手动 VLESS 下载测速", command=lambda: self.run_selected_stage("speed"))
         self.result_context_menu.add_command(label="手动查询 ASN / BGP", command=lambda: self.run_selected_stage("route"))
+        self.result_context_menu.add_separator()
+        self.result_context_menu.add_command(label="手动强制保留所选 IP", command=lambda: self._set_selected_override("keep"))
+        self.result_context_menu.add_command(label="恢复自动筛选", command=lambda: self._set_selected_override("auto"))
+        self.result_context_menu.add_command(label="手动排除所选 IP", command=lambda: self._set_selected_override("exclude"))
         self.result_context_menu.add_separator()
         self.result_context_menu.add_command(label="复制选中 IP", command=self._copy_selected_ip)
         self.result_context_menu.add_command(label="导出选中 IP…", command=self._export_selected_ips)
@@ -1536,11 +1807,24 @@ class App:
             p = urllib.parse.urlsplit(url)
             if p.scheme.lower() not in ("http", "https") or not p.hostname:
                 raise ValueError("测速 URL 必须是有效的 http:// 或 https:// 地址")
+
+        try:
+            retry_count = max(0, min(3, int(self.retry_count_var.get())))
+        except ValueError as exc:
+            raise ValueError("瞬态错误重试次数必须填写 0–3 的整数") from exc
+        filters = {
+            "prune_port_fail": self.prune_port_var.get(),
+            "prune_cf_miss": self.prune_cf_var.get(),
+            "prune_ping_loss": self.prune_ping_var.get(),
+            "prune_tcping_incomplete": self.prune_tcping_var.get(),
+            "prune_vless_fail": self.prune_vless_var.get(),
+        }
         return {"scan_workers": scan_workers, "probe_workers": probe_workers, "timeout": timeout,
                 "ping_count": ping_count, "ping_timeout": ping_timeout,
                 "tcping_count": tcping_count, "tcping_timeout": tcping_timeout,
                 "speed_workers": speed_workers, "speed_timeout": speed_timeout, "asn_limit": asn_limit,
-                "ping_top_n": ping_top_n, "tcping_top_n": tcping_top_n,
+                "ping_top_n": ping_top_n, "tcping_top_n": tcping_top_n, "retry_count": retry_count,
+                "filters": filters,
                 "speed_url": url, "vless_uri": vless_uri, "sni": self.sni_var.get().strip(),
                 "xray_path": self.xray_var.get().strip(), "only_cf_candidates": True,
                 "target_text": self.targets_text.get("1.0", "end").strip(), "mode": self.mode_var.get()}
@@ -1581,6 +1865,7 @@ class App:
         atomic_write(folder / "task_config.json", json.dumps(config, ensure_ascii=False, indent=2))
         store = TaskStore(folder, create=True)
         store.add_targets(targets)
+        store.set_filters(config.get("filters"))
         store.set_meta("created_at", utc_now())
         store.set_meta("app_version", APP_VERSION)
         store.set_meta("task_mode", config.get("mode", "local"))
@@ -1598,6 +1883,9 @@ class App:
             with contextlib.suppress(Exception):
                 self.store.close()
         self.store, self.task_folder, self.last_config = store, folder, config
+        config.setdefault("filters", DEFAULT_FILTERS)
+        store.set_filters(config.get("filters"))
+        self.active_filters = store.get_filters()
         mode = config.get("mode") or store.get_meta("task_mode", "local")
         self.mode_var.set(mode)
         self._load_config_to_ui(config)
@@ -1651,6 +1939,13 @@ class App:
         self.sni_var.set(cfg.get("sni", ""))
         self.xray_var.set(cfg.get("xray_path", find_xray()) or find_xray())
         self.mode_var.set(cfg.get("mode", "local"))
+        filters = normalize_filters(cfg.get("filters"))
+        self.prune_port_var.set(filters["prune_port_fail"])
+        self.prune_cf_var.set(filters["prune_cf_miss"])
+        self.prune_ping_var.set(filters["prune_ping_loss"])
+        self.prune_tcping_var.set(filters["prune_tcping_incomplete"])
+        self.prune_vless_var.set(filters["prune_vless_fail"])
+        self.retry_count_var.set(str(cfg.get("retry_count", 1)))
         self._mode_changed()
 
     def _prerequisite_message(self, stage):
@@ -1697,19 +1992,84 @@ class App:
                 refresh_selection = True
         try:
             cfg = self._config_from_ui()
+            old_filters = self.store.get_filters()
+            new_filters = normalize_filters(cfg.get("filters"))
+            changed_filters = {key for key in DEFAULT_FILTERS if old_filters.get(key) != new_filters.get(key)}
+            upstream_filter_changes = changed_filters.intersection(
+                {"prune_port_fail", "prune_cf_miss", "prune_ping_loss"}
+            )
+            if stage == "speed" and upstream_filter_changes:
+                messagebox.showinfo(
+                    "候选队列需要更新",
+                    "443 / CF / PING 剔除规则发生变化。请先重新执行 TCPING，"
+                    "让新的 Ping 候选完成 TCPING，再运行 VLESS 测速。"
+                )
+                return
+            if stage in ("tcping", "speed") and changed_filters:
+                refresh_selection = True
             cfg["target_text"] = self.last_config.get("target_text", "")
             cfg["mode"] = self.last_config.get("mode", self.mode_var.get())
             atomic_write(self.task_folder / "task_config.json", json.dumps(cfg, ensure_ascii=False, indent=2))
             self.last_config = cfg
+            self.store.set_filters(cfg.get("filters"))
+            self.active_filters = self.store.get_filters()
         except Exception as exc:
             messagebox.showerror("参数检查", str(exc))
             return
         self._start_stage(stage, refresh_selection=refresh_selection)
 
+    def _launch_auto_pipeline(self):
+        if not self.store:
+            return
+        self.current_stage = "auto"
+        mode = self.last_config.get("mode", "local")
+        self.runner = AutoPipelineRunner(
+            self.store, self.last_config,
+            lambda kind, data: self.events.put((kind, data)), mode
+        )
+        def run_with_power_guard():
+            set_windows_awake(True)
+            try:
+                self.runner.run()
+            finally:
+                set_windows_awake(False)
+        self.runner_thread = threading.Thread(target=run_with_power_guard, daemon=True)
+        self.runner_thread.start()
+        self.pause_btn.configure(state="normal", text="暂停当前步骤")
+        self.stop_btn.configure(state="normal")
+        self.status_var.set("正在执行：一键挑选 IP")
+        self.stage_var.set("一键流程启动")
+        self._update_stage_buttons(running="auto")
+
+    def run_one_click(self):
+        if not self.store or not self.task_folder:
+            messagebox.showinfo(APP_NAME, "请先创建或恢复任务")
+            return
+        if self.runner_thread and self.runner_thread.is_alive():
+            messagebox.showwarning(APP_NAME, "当前步骤仍在运行")
+            return
+        try:
+            cfg = self._config_from_ui(validate_speed_settings=True)
+            if not cfg.get("vless_uri"):
+                raise ValueError("请先填写 VLESS 模板")
+            if not cfg.get("xray_path") or not Path(cfg["xray_path"]).is_file():
+                raise FileNotFoundError("请先下载或选择有效的 Xray-core")
+            cfg["target_text"] = self.last_config.get("target_text", "")
+            cfg["mode"] = self.last_config.get("mode", self.mode_var.get())
+            atomic_write(self.task_folder / "task_config.json", json.dumps(cfg, ensure_ascii=False, indent=2))
+            self.last_config = cfg
+            self.store.set_filters(cfg.get("filters"))
+            self.active_filters = self.store.get_filters()
+        except Exception as exc:
+            messagebox.showerror("一键挑选参数检查", str(exc))
+            return
+        self._launch_auto_pipeline()
+
     def _start_stage(self, stage, refresh_selection=False):
         if not self.store:
             return
         self.current_stage = stage
+        self.store.set_meta("auto_pipeline_active", "0")
         self.store.set_meta("active_stage", stage)
         self.runner = ManualStageRunner(self.store, self.last_config, lambda kind, data: self.events.put((kind, data)),
                                         self.last_config.get("mode", "local"), stage, refresh_selection=refresh_selection)
@@ -1747,8 +2107,30 @@ class App:
             cfg = self._config_from_ui()
             cfg["mode"] = self.last_config.get("mode", "local")
             cfg["target_text"] = self.last_config.get("target_text", "")
+            old_filters = self.store.get_filters()
+            new_filters = normalize_filters(cfg.get("filters"))
+            changed_filters = {key for key in DEFAULT_FILTERS if old_filters.get(key) != new_filters.get(key)}
+            upstream_filter_changes = changed_filters.intersection(
+                {"prune_port_fail", "prune_cf_miss", "prune_ping_loss"}
+            )
+            if self.store.get_meta("auto_pipeline_active", "0") == "1":
+                self.last_config = cfg
+                self.store.set_filters(new_filters)
+                self.active_filters = self.store.get_filters()
+                atomic_write(self.task_folder / "task_config.json", json.dumps(cfg, ensure_ascii=False, indent=2))
+                self._launch_auto_pipeline()
+                return
+            if stage == "speed" and upstream_filter_changes:
+                messagebox.showinfo(
+                    "候选队列需要更新",
+                    "443 / CF / PING 剔除规则发生变化。请先执行 TCPING，再恢复 VLESS 测速。"
+                )
+                return
             self.last_config = cfg
-            self._start_stage(stage)
+            self.store.set_filters(new_filters)
+            self.active_filters = self.store.get_filters()
+            atomic_write(self.task_folder / "task_config.json", json.dumps(cfg, ensure_ascii=False, indent=2))
+            self._start_stage(stage, refresh_selection=(stage in ("tcping", "speed") and bool(changed_filters)))
         except Exception as exc:
             messagebox.showerror("恢复任务", str(exc))
 
@@ -1765,8 +2147,15 @@ class App:
         if not hasattr(self, "stage_buttons"):
             return
         mode = self.last_config.get("mode", self.mode_var.get()) if self.store else self.mode_var.get()
+        if running == "auto":
+            self.auto_btn.configure(state="disabled")
+        else:
+            self.auto_btn.configure(state="normal")
         for stage, label, _ in self.STAGES:
             btn = self.stage_buttons[stage]
+            if running == "auto":
+                btn.configure(state="disabled", text="一键执行中…")
+                continue
             if stage == "port" and mode == "shodan":
                 btn.configure(state="disabled", text="1  Shodan 已确认 443")
                 continue
@@ -1805,6 +2194,7 @@ class App:
         self.stop_btn.configure(state="disabled")
         labels = {k: v for k, v, _ in self.STAGES}
         labels.update({
+            "auto": "一键挑选 IP",
             "manual_ping": "手动 PING",
             "manual_tcping": "手动 TCPING",
             "manual_speed": "手动 VLESS 测速",
@@ -1812,12 +2202,8 @@ class App:
         })
         self.status_var.set(f"{labels.get(stage, stage)}：{ {'completed':'完成', 'paused':'已暂停，可继续', 'stopped':'已停止，可恢复', 'error':'失败，请查看日志'}.get(state,state)}")
         self.stage_var.set(self.status_var.get())
-        if state == "completed":
-            defaults = {"port": ("port", False), "http": ("cf", True), "ping": ("ping", False),
-                        "tcping": ("tcping", False), "speed": ("speed", True), "route": ("speed", True)}
-            self.sort_column, self.sort_desc = defaults.get(stage, (self.sort_column, self.sort_desc))
         self._update_stage_buttons()
-        self._render_results()
+        # Per-IP result events update existing Treeview items in place; do not resort here.
         self._update_counts()
         self._log(self.status_var.get())
 
@@ -1839,33 +2225,62 @@ class App:
             return (1, 0)
         return (0, float(value) if numeric else str(value).lower())
 
+    def _row_values(self, r):
+        cf = "命中" if r["cf_candidate"] else ("未命中" if r["http_status"] is not None else "待测")
+        net = " ".join(x for x in (r["asn"] or "", r["organization"] or "") if x)
+        server = r["http_server"] or r["cf_ray"] or r["tls_server"] or ""
+        reasons = filter_reasons(r, self.active_filters)
+        override = (r["manual_override"] or "").strip()
+        filter_label = "手动保留" if override == "keep" else ("手动排除" if override == "exclude" else
+                         ("；".join(reasons) if reasons else "未触发剔除"))
+        return (r["ip"], f"{r['port_ms']:.2f}" if r["port_ms"] is not None else (r["port_status"] or ""), cf,
+                str(r["cf_score"] or 0) if r["http_status"] is not None else "",
+                f"{r['ping_ms']:.2f}" if r["ping_ms"] is not None else (r["ping_status"] or ""),
+                f"{r['ping_loss_pct']:.1f}" if r["ping_loss_pct"] is not None else "",
+                f"{r['tcping_ms']:.2f}" if r["tcping_ms"] is not None else (r["tcping_status"] or ""),
+                f"{r['tcping_success_pct']:.1f}" if r["tcping_success_pct"] is not None else "",
+                f"{r['speed_mbps']:.3f}" if r["speed_mbps"] else (r["vless_status"] or ""),
+                f"{r['ttfb_ms']:.2f}" if r["ttfb_ms"] is not None else "", net, server, filter_label)
+
+    def _row_visible(self, r):
+        if self.only_hits_var.get() and int(r["cf_candidate"] or 0) != 1:
+            return False
+        reasons = filter_reasons(r, self.active_filters)
+        view = self.view_var.get() if self.view_var else "全部"
+        if view == "可用候选" and reasons:
+            return False
+        if view == "已过滤" and not reasons:
+            return False
+        return True
+
+    def _update_result_row(self, ip: str):
+        if not self.store or not hasattr(self, "tree"):
+            return
+        row = self.store.row_for_ip(ip)
+        exists = self.tree.exists(ip)
+        if row is None or not self._row_visible(row):
+            if exists:
+                self.tree.delete(ip)
+            return
+        values = self._row_values(row)
+        if exists:
+            self.tree.item(ip, values=values)
+        else:
+            self.tree.insert("", "end", iid=ip, values=values)
+
     def _render_results(self):
         if not hasattr(self, "tree") or not self.store:
             return
         selected_before_refresh = set(self.tree.selection())
         for item in self.tree.get_children():
             self.tree.delete(item)
-        rows = self.store.all_rows()
-        if self.only_hits_var.get():
-            rows = [r for r in rows if int(r["cf_candidate"] or 0) == 1]
+        rows = [r for r in self.store.all_rows() if self._row_visible(r)]
         present = [r for r in rows if self._sort_value(r, self.sort_column)[0] == 0]
         missing = [r for r in rows if self._sort_value(r, self.sort_column)[0] == 1]
         present.sort(key=lambda r: self._sort_value(r, self.sort_column)[1], reverse=self.sort_desc)
         rows = present + missing
         for r in rows[:10000]:
-            cf = "命中" if r["cf_candidate"] else ("未命中" if r["http_status"] is not None else "待测")
-            net = " ".join(x for x in (r["asn"] or "", r["organization"] or "") if x)
-            server = r["http_server"] or r["cf_ray"] or r["tls_server"] or ""
-            vals = (r["ip"], f"{r['port_ms']:.2f}" if r["port_ms"] is not None else (r["port_status"] or ""), cf,
-                    str(r["cf_score"] or 0) if r["http_status"] is not None else "",
-                    f"{r['ping_ms']:.2f}" if r["ping_ms"] is not None else (r["ping_status"] or ""),
-                    f"{r['ping_loss_pct']:.1f}" if r["ping_loss_pct"] is not None else "",
-                    f"{r['tcping_ms']:.2f}" if r["tcping_ms"] is not None else (r["tcping_status"] or ""),
-                    f"{r['tcping_success_pct']:.1f}" if r["tcping_success_pct"] is not None else "",
-                    f"{r['speed_mbps']:.3f}" if r["speed_mbps"] else (r["vless_status"] or ""),
-                    f"{r['ttfb_ms']:.2f}" if r["ttfb_ms"] is not None else "", net, server)
-            ip_iid = str(r["ip"])
-            self.tree.insert("", "end", iid=ip_iid, values=vals)
+            self.tree.insert("", "end", iid=str(r["ip"]), values=self._row_values(r))
         restore_selection = [ip for ip in selected_before_refresh if self.tree.exists(ip)]
         if restore_selection:
             self.tree.selection_set(restore_selection)
@@ -1945,6 +2360,7 @@ class App:
         ips = self._selected_result_ips()
         if not ips:
             return "break"
+        self.context_ips = list(ips)
         self.result_context_menu.entryconfigure(0, label=f"已选 {len(ips):,} 个 IP")
         try:
             self.result_context_menu.tk_popup(event.x_root, event.y_root)
@@ -1986,6 +2402,7 @@ class App:
     def _start_selected_stage(self, stage: str, ips: list[str]):
         if not self.store:
             return
+        self.store.set_meta("auto_pipeline_active", "0")
         self.current_stage = f"manual_{stage}"
         self.runner = ManualSelectionRunner(
             self.store, self.last_config,
@@ -2009,6 +2426,23 @@ class App:
         self.status_var.set(f"正在执行：{labels.get(stage, stage)}（{len(ips):,} 个 IP）")
         self.stage_var.set(f"当前步骤：{labels.get(stage, stage)}")
         self._update_stage_buttons(running=stage)
+
+    def _set_selected_override(self, override: str):
+        if not self.store:
+            return
+        ips = list(self.context_ips or self._selected_result_ips())
+        if not ips:
+            return
+        try:
+            for ip in ips:
+                self.store.set_manual_override(ip, override)
+            labels = {"keep": "手动保留", "exclude": "手动排除", "auto": "恢复自动筛选"}
+            self._log(f"{labels[override]}：{len(ips):,} 个 IP；原始检测结果未删除")
+            for ip in ips:
+                self._update_result_row(ip)
+            self._update_counts()
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"更新筛选覆盖失败：{exc}")
 
     def _copy_selected_ip(self, _event=None):
         ips = self._selected_result_ips()
@@ -2072,7 +2506,8 @@ class App:
                     self.progress.configure(value=100 * done / max(total, 1))
                     self.stage_var.set(f"{name}：{done:,} / {total:,}")
                     self._update_counts()
-                    if done % 25 == 0 or done == total: self._render_results()
+                elif kind == "result":
+                    self._update_result_row(str(data))
                 elif kind == "done":
                     self._finish_runner(data)
                 elif kind == "xray":

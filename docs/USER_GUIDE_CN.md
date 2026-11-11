@@ -8,7 +8,20 @@
 4. 需要 VLESS 实测时，在 Xray-core 一栏点击“下载 Xray”或“选择”已有 `xray.exe`。
 5. 粘贴自己的 VLESS URI 模板。程序只替换服务器地址，保留原端口、UUID、TLS SNI、WebSocket Host/Path、transport 等已有参数。
 
-## 2. 本地网段模式
+## 2. 一键挑选与自动剔除（0.1.6）
+
+任务创建后，除了逐个点击阶段按钮，也可以明确点击一键挑选 IP。该操作不会因创建任务而自动启动。
+
+- 本地模式顺序：扫描 443 → 查 CF 命中 → PING → TCPING → VLESS 完整文件下载。
+- Shodan 模式顺序：查 CF 命中 → PING → TCPING → VLESS。导入时已将 port:443 标记为确认，不再重复扫描。
+- 必须先填写 VLESS URI，并选择有效的 xray.exe。一键流程不查询 ASN/BGP，不调用 Shodan API，也不会扩展当前任务的 IP。
+- 运行中可暂停/停止；停止后恢复任务将继续一键流程。
+
+自动剔除设置可分别开启：443 未开放、CF 未命中、PING 丢包大于 0%、TCPING 成功率低于 100%、VLESS 失败。默认开启 443 和 CF 两项，其他项默认关闭。尚未测试的阶段不会被当成失败。过滤仅影响后续候选队列，不会删除原始 IP 或测量结果。结果表可切换全部 / 可用候选 / 已过滤，并显示过滤原因。右键所选行可手动保留、恢复自动筛选或手动排除。
+
+瞬态超时、连接重置等错误默认重试一次，可设置 0–3 次；连接拒绝等确定性失败不重试。尝试记录保存在任务 SQLite 中。完整 CSV 增加 VLESS 测试时间、URL、超时、并发和尝试次数。
+
+## 3. 本地网段模式
 
 在顶部选择“本地网段模式”，每行粘贴一个目标：
 
@@ -28,7 +41,7 @@
 - VLESS 测速：填写测速 URL，执行完整文件下载；默认下载 URL 为 `http://speedtest.tyo11.jp.leaseweb.net/10mb.bin`。
 - 查询 ASN：查 BGP 前缀、起源 ASN、组织 holder 和 RDNS。
 
-## 3. Shodan 导入模式
+## 4. Shodan 导入模式
 
 1. 切换 Shodan 导入模式。
 2. 粘贴 IP 清单，或导入 Shodan CSV。软件从文本中提取 IPv4 地址并去重。
@@ -38,7 +51,7 @@
 
 未命中项会从后续候选视图/阶段中排除，但仍保留为原始导入记录。它们不会因“过滤”而从数据库彻底删除。
 
-## 4. 如何看 CF 命中
+## 5. 如何看 CF 命中
 
 - TCP 443 开放不代表 CF。
 - 明文 HTTP 请求发送到 HTTPS 端口时返回 `400 The plain HTTP request was sent to HTTPS port`，与 `Server: cloudflare`、有效 CF-RAY 或正文特征组合时可形成候选证据。

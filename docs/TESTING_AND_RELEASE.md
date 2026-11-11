@@ -10,7 +10,7 @@ py -3 cf_ip_finder.py --self-test
 py -3 -m unittest discover -s tests -v
 ```
 
-The built-in self-test is offline and exercises core parsing, persistence, candidate pipeline, sorting selection, exports, VLESS URI replacement and manual-stage runner wiring. The 0.1.5 unit tests additionally mock direct selected-IP PING/TCPING/ASN/VLESS actions and assert that they do not mutate global stage state or funnel snapshots. Unit tests add smaller direct checks, including positive Top-N ranking, zero-means-all behavior for unresponsive/failed candidates, snapshot immutability, strict VLESS cohort boundaries, 0.1.2 legacy-task migration, and SQLite reopen recovery. These do not prove real public IP availability or user's ISP performance.
+The built-in self-test is offline and exercises core parsing, persistence, candidate pipeline, sorting selection, exports, VLESS URI replacement and manual-stage runner wiring. The v0.1.5 tests cover exact selected-IP PING/TCPING/ASN/VLESS diagnostics and funnel immutability. The v0.1.6 test_v016_pipeline.py tests optional candidate filters, manual overrides, transient-vs-deterministic retry policy, persisted retry attempts, SQLite migration/reopen, and Local/Shodan one-click stage order. These offline tests do not prove real public IP availability or the user's ISP performance.
 
 ## GitHub Actions
 

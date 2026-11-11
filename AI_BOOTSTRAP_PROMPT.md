@@ -14,6 +14,10 @@
 4. 阅读 `cf_ip_finder.py` 和 `cf_ip_tester_legacy.py` 中与你要修改的部分，确认实际代码行为。
 5. 先给用户一份简短的接手摘要：当前版本、代码/工作流状态、未完成事项、下一步建议。若用户已明确要求开发，完成检查后直接开工，不要重复问已经有答案的问题。
 
+## 当前版本能力（0.1.6）
+
+一键流程只处理当前任务目标：Local 为 TCP 443 → CF → PING → TCPING → VLESS；Shodan 为 CF → PING → TCPING → VLESS。ASN/BGP 仍由用户手动触发。可选过滤规则只决定后续候选资格，原始 IP 与测量结果保留在 SQLite；支持手动保留/恢复自动筛选/手动排除。结果按 IP 原位更新，不自动排序。瞬态重试历史写入 SQLite。旧版 VLESS 引擎不得擅自改写。
+
 ## 产品定位
 
 CF IP Finder 是 Windows 本地桌面工具，核心工作是：用户提供 IPv4 CIDR/范围或 Shodan 搜索结果 → 分阶段识别 CF 反代候选 → PING/TCPING 诊断 → 使用用户 VLESS 模板和 Xray 做真实下载测试 → 结果排序及导出。它不是 Cloudflare 官方 IP 段下载器，也不自动发现或扩展用户没有输入的 IP 范围。

@@ -1,10 +1,21 @@
 # Session Handoff — CF IP Finder
 
-**当前仓库版本：0.1.5（已发布）**  
+**当前仓库版本：0.1.6（以 GitHub 实际 Release 状态为准）**  
 **当前主分支：`main`**  
-**当前开发基线：0.1.5 选中 IP 右键手动诊断**
+**当前开发基线：一键挑选、候选自动剔除与手动覆盖**
 
 ## 1. 当前实现摘要
+
+### v0.1.6 新增行为
+
+- 一键挑选必须由用户明确点击。本地流程：TCP 443 → CF → PING → TCPING → VLESS；Shodan 流程：CF → PING → TCPING → VLESS。ASN/BGP 仍手动。
+- 不使用 Shodan API、不扩展目标 CIDR/IP；一键流程只使用当前任务中已有目标。
+- 五项可选过滤：443 未开放、CF 未命中、PING 丢包、TCPING 成功率不足、VLESS 失败。过滤只影响后续候选资格，原始 IP 与检测结果保留在 SQLite。
+- 结果视图：全部 / 可用候选 / 已过滤；右键支持手动保留、恢复自动筛选、手动排除。
+- 瞬态失败默认重试一次，最多可配置 3 次；尝试写入 SQLite attempt_history。VLESS 测试参数元数据加入完整 CSV。
+- 结果按 IP 原位更新，阶段完成和进度刷新不会自动重排；排序只由表头点击触发。
+- 继续保持 cf_ip_tester_legacy.py 不变。
+
 
 CF IP Finder 是 Windows Tkinter 应用，Python 3.10+，运行时仅使用标准库。主程序 `cf_ip_finder.py`，旧版 VLESS 引擎 `cf_ip_tester_legacy.py`。
 

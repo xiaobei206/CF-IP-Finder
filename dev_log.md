@@ -59,3 +59,13 @@
 - 代码改动提交 8a5502376968af2ff9978aff2a19913e13f931fb 已通过 Windows/Ubuntu 离线编译、自检和单元测试；正式 Release 的 Windows 构建与资产由本次版本提交工作流验证。
 
 - Release 验证完成：v0.1.5 由 Actions run 42659741800 成功构建和发布；Ubuntu/Windows 离线验证、Windows EXE 打包、源码 ZIP、SHA256SUMS 与 GitHub Release 发布均成功。Release：https://github.com/xiaobei206/CF-IP-Finder/releases/tag/v0.1.5。用户本机真实网络/VLESS 性能仍未由 CI 覆盖。
+
+
+## 2026-11-11 — 0.1.6 一键挑选与自动过滤
+
+- 增加本地与 Shodan 两种显式一键挑选流程；Shodan 跳过已确认 443，本地执行 TCP 443；ASN/BGP 不纳入一键流程。
+- 新增可选剔除条件和结果视图，保留 SQLite 原始 IP 与阶段测量数据；支持单 IP 手动保留/恢复筛选/手动排除。
+- 阶段执行新增瞬态错误重试与持久化 attempt history；VLESS 结果记录测试参数元数据。
+- 结果表按稳定 IP 行原位更新；不因阶段进度自动排序。
+- 增加自动流程暂停/停止后的整条流程恢复逻辑。
+- 保持 legacy VLESS 下载引擎文件不变。

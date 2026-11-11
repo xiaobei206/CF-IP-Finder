@@ -1,4 +1,12 @@
-# Architecture — CF IP Finder 0.1.5
+# Architecture — CF IP Finder 0.1.6
+
+## 1.1 v0.1.6 pipeline and eligibility
+
+- AutoPipelineRunner orchestrates existing ManualStageRunner instances instead of duplicating probe logic. Local order is port → HTTP/CF → PING → TCPING → VLESS; Shodan omits port because imported records are marked as externally confirmed 443.
+- ASN/BGP is deliberately outside one-click execution. Target expansion and Shodan API requests are not part of the pipeline.
+- filter_reasons() is the single eligibility rule for optional port / CF / PING / TCPING / VLESS exclusions and manual overrides. Filter configuration is stored in task JSON and SQLite meta; IP rows and measurement data are never deleted by automatic filtering.
+- attempt_history records retry attempt number, UTC time, stage, status and detail. VLESS result columns also record timestamp, URL, timeout, concurrency and total attempt count.
+- Scan workers emit per-IP result events; the Tkinter table updates stable IP row identifiers in place. The app does not automatically reorder rows while a stage runs.
 
 ## 1. Runtime overview
 
